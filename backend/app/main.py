@@ -22,6 +22,7 @@ from .reporting import (
     build_campaign_intelligence_report,
     render_campaign_intelligence_markdown,
 )
+from .authority_engine import AuthorityScoringEngine
 from .rules import RuleRegistry, RuleRegistryError
 from .schemas import (
     AlphaSignal,
@@ -57,6 +58,10 @@ from .schemas import (
     SignalPerformanceRead,
     SegmentRegistry,
     SegmentRegistryCreate,
+    DecisionMaker,
+    DecisionMakerCreate,
+    ContactPath,
+    ContactPathCreate,
 )
 from .scoring_engine import ScoringEngine
 
@@ -236,6 +241,94 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         if score is None:
             raise HTTPException(status_code=404, detail="Score not found")
         return score
+
+    @app.get("/prospects/{prospect_id}/decision-makers", response_model=list[DecisionMaker])
+    def list_decision_makers(
+        prospect_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> list[DecisionMaker]:
+        require_prospect(repository, prospect_id)
+        return repository.list_decision_makers(prospect_id)
+
+    @app.post("/prospects/{prospect_id}/decision-makers", response_model=DecisionMaker, status_code=201)
+    def create_decision_maker(
+        prospect_id: str,
+        data: DecisionMakerCreate,
+        repository: Repository = Depends(get_repository),
+    ) -> DecisionMaker:
+        require_prospect(repository, prospect_id)
+        rules = load_rules()
+        score, rationale = AuthorityScoringEngine(rules).calculate(data.role)
+        return repository.create_decision_maker(prospect_id, data, score, rationale)
+
+    @app.put("/decision-makers/{decision_maker_id}", response_model=DecisionMaker)
+    def update_decision_maker(
+        decision_maker_id: str,
+        data: DecisionMakerCreate,
+        repository: Repository = Depends(get_repository),
+    ) -> DecisionMaker:
+        dm = repository.get_decision_maker(decision_maker_id)
+        if dm is None:
+            raise HTTPException(status_code=404, detail="Decision maker not found")
+        rules = load_rules()
+        score, rationale = AuthorityScoringEngine(rules).calculate(data.role)
+        updated = repository.update_decision_maker(decision_maker_id, data, score, rationale)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Decision maker not found")
+        return updated
+
+    @app.delete("/decision-makers/{decision_maker_id}", status_code=204)
+    def delete_decision_maker(
+        decision_maker_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> None:
+        deleted = repository.delete_decision_maker(decision_maker_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Decision maker not found")
+
+    @app.get("/decision-makers/{decision_maker_id}/contact-paths", response_model=list[ContactPath])
+    def list_contact_paths(
+        decision_maker_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> list[ContactPath]:
+        dm = repository.get_decision_maker(decision_maker_id)
+        if dm is None:
+            raise HTTPException(status_code=404, detail="Decision maker not found")
+        return repository.list_contact_paths(decision_maker_id)
+
+    @app.post("/decision-makers/{decision_maker_id}/contact-paths", response_model=ContactPath, status_code=201)
+    def create_contact_path(
+        decision_maker_id: str,
+        data: ContactPathCreate,
+        repository: Repository = Depends(get_repository),
+    ) -> ContactPath:
+        dm = repository.get_decision_maker(decision_maker_id)
+        if dm is None:
+            raise HTTPException(status_code=404, detail="Decision maker not found")
+        return repository.create_contact_path(decision_maker_id, data)
+
+    @app.put("/contact-paths/{contact_path_id}", response_model=ContactPath)
+    def update_contact_path(
+        contact_path_id: str,
+        data: ContactPathCreate,
+        repository: Repository = Depends(get_repository),
+    ) -> ContactPath:
+        path = repository.get_contact_path(contact_path_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="Contact path not found")
+        updated = repository.update_contact_path(contact_path_id, data)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Contact path not found")
+        return updated
+
+    @app.delete("/contact-paths/{contact_path_id}", status_code=204)
+    def delete_contact_path(
+        contact_path_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> None:
+        deleted = repository.delete_contact_path(contact_path_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Contact path not found")
 
     @app.post("/campaign-batches", response_model=CampaignBatch, status_code=201)
     def create_campaign_batch(

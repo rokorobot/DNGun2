@@ -6,6 +6,7 @@ import {
   BookOpenCheck,
   CheckSquare,
   ClipboardList,
+  Edit2,
   FileText,
   Gauge,
   LineChart,
@@ -16,7 +17,8 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Target,
-  Terminal
+  Terminal,
+  Trash2
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
@@ -50,6 +52,7 @@ import {
   listProspects,
   listProspectScores,
   listEvidenceEntries,
+  listSegments,
   listSignals,
   Prospect,
   ProspectAlphaSignal,
@@ -64,8 +67,18 @@ import {
   rejectOfferProposal,
   listOfferProspectFits,
   updateCampaignOutcome,
-  listSegments,
-  SegmentRegistry
+  SegmentRegistry,
+  DecisionMaker,
+  listDecisionMakers,
+  createDecisionMaker,
+  updateDecisionMaker,
+  deleteDecisionMaker,
+  ContactPath,
+  ContactPathType,
+  listContactPaths,
+  createContactPath,
+  updateContactPath,
+  deleteContactPath
 } from "../lib/api";
 
 type View = "inbox" | "scoring" | "report" | "evidence" | "outcomes" | "learning" | "offers";
@@ -98,6 +111,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [filterPdmCode, setFilterPdmCode] = useState("");
   const [filterOfferId, setFilterOfferId] = useState("");
+  const [decisionMakers, setDecisionMakers] = useState<DecisionMaker[]>([]);
 
   const selectedProspect = useMemo(
     () => prospects.find((prospect) => prospect.id === selectedProspectId) ?? null,
@@ -133,14 +147,16 @@ export default function Home() {
 
   async function refreshProspectIntelligence(prospectId: string) {
     if (!prospectId) return;
-    const [nextSignals, scores, alphaMatches] = await Promise.all([
+    const [nextSignals, scores, alphaMatches, dms] = await Promise.all([
       listSignals(prospectId),
       listProspectScores(prospectId),
-      listProspectAlphaSignals(prospectId)
+      listProspectAlphaSignals(prospectId),
+      listDecisionMakers(prospectId)
     ]);
     setSignals(nextSignals);
     setScore(scores[0] ?? null);
     setProspectAlphaSignals(alphaMatches);
+    setDecisionMakers(dms);
   }
 
   async function refreshReport(pdmCode = filterPdmCode, offerId = filterOfferId) {
@@ -425,6 +441,7 @@ export default function Home() {
               signals={signals}
               score={score}
               prospectAlphaSignals={prospectAlphaSignals}
+              decisionMakers={decisionMakers}
               onProspectChange={setSelectedProspectId}
               onSignalAdded={async () => {
                 if (selectedProspectId) await refreshProspectIntelligence(selectedProspectId);
@@ -432,6 +449,9 @@ export default function Home() {
               onScore={(nextScore) => {
                 setScore(nextScore);
                 if (selectedProspectId) void refreshProspectIntelligence(selectedProspectId);
+              }}
+              onDecisionMakersChange={async () => {
+                if (selectedProspectId) await refreshProspectIntelligence(selectedProspectId);
               }}
               setMessage={setMessage}
             />
@@ -948,9 +968,11 @@ function ScoringWorkspace({
   selectedProspectId,
   signals,
   score,
+  decisionMakers,
   onProspectChange,
   onSignalAdded,
   onScore,
+  onDecisionMakersChange,
   setMessage
 }: {
   alphaRules: AlphaSignalRule[];
@@ -960,9 +982,11 @@ function ScoringWorkspace({
   selectedProspectId: string;
   signals: Signal[];
   score: ProspectScore | null;
+  decisionMakers: DecisionMaker[];
   onProspectChange: (id: string) => void;
   onSignalAdded: () => Promise<void>;
   onScore: (score: ProspectScore) => void;
+  onDecisionMakersChange: () => Promise<void>;
   setMessage: (message: string) => void;
 }) {
   async function submitSignal(event: FormEvent<HTMLFormElement>) {
@@ -1006,12 +1030,22 @@ function ScoringWorkspace({
           </label>
 
           {prospect ? (
-            <IntelligenceBrief
-              prospect={prospect}
-              score={score}
-              signals={signals}
-              alphaMatches={prospectAlphaSignals}
-            />
+            <>
+              <IntelligenceBrief
+                prospect={prospect}
+                score={score}
+                signals={signals}
+                alphaMatches={prospectAlphaSignals}
+              />
+              <div className="mt-4">
+                <DecisionMakersSection
+                  prospect={prospect}
+                  decisionMakers={decisionMakers}
+                  onRefresh={onDecisionMakersChange}
+                  setMessage={setMessage}
+                />
+              </div>
+            </>
           ) : null}
 
           <section className="border border-[#202c28] bg-[#0b0f10]">
@@ -1076,6 +1110,589 @@ function ScoringWorkspace({
         </form>
       </div>
     </Panel>
+  );
+}
+
+function DecisionMakersSection({
+  prospect,
+  decisionMakers,
+  onRefresh,
+  setMessage
+}: {
+  prospect: Prospect;
+  decisionMakers: DecisionMaker[];
+  onRefresh: () => Promise<void>;
+  setMessage: (message: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [editingDm, setEditingDm] = useState<DecisionMaker | null>(null);
+  const [formData, setFormData] = useState({
+    name: "",
+    role: "",
+    email: "",
+    linkedin: "",
+    entry_source: "MANUAL"
+  });
+
+  // Contact Path states
+  const [isPathOpen, setIsPathOpen] = useState(false);
+  const [editingPath, setEditingPath] = useState<ContactPath | null>(null);
+  const [activeDmIdForPath, setActiveDmIdForPath] = useState("");
+  const [pathFormData, setPathFormData] = useState({
+    type: "EMAIL" as ContactPathType,
+    value: "",
+    source: "MANUAL",
+    confidence: 100,
+    verified: false,
+    last_verified_at: ""
+  });
+
+  function openAddModal() {
+    setEditingDm(null);
+    setFormData({
+      name: "",
+      role: "",
+      email: "",
+      linkedin: "",
+      entry_source: "MANUAL"
+    });
+    setIsOpen(true);
+  }
+
+  function handleEdit(dm: DecisionMaker) {
+    setEditingDm(dm);
+    setFormData({
+      name: dm.name,
+      role: dm.role,
+      email: dm.email || "",
+      linkedin: dm.linkedin || "",
+      entry_source: dm.entry_source || "MANUAL"
+    });
+    setIsOpen(true);
+  }
+
+  function closeModal() {
+    setIsOpen(false);
+    setEditingDm(null);
+  }
+
+  // Contact Path Handlers
+  function openAddPathModal(dmId: string) {
+    setActiveDmIdForPath(dmId);
+    setEditingPath(null);
+    setPathFormData({
+      type: "EMAIL",
+      value: "",
+      source: "MANUAL",
+      confidence: 100,
+      verified: false,
+      last_verified_at: ""
+    });
+    setIsPathOpen(true);
+  }
+
+  function handleEditPath(path: ContactPath) {
+    setEditingPath(path);
+    setActiveDmIdForPath(path.decision_maker_id);
+    setPathFormData({
+      type: path.type,
+      value: path.value,
+      source: path.source || "MANUAL",
+      confidence: path.confidence || 100,
+      verified: path.verified || false,
+      last_verified_at: path.last_verified_at || ""
+    });
+    setIsPathOpen(true);
+  }
+
+  function closePathModal() {
+    setIsPathOpen(false);
+    setEditingPath(null);
+    setActiveDmIdForPath("");
+  }
+
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setMessage("");
+    try {
+      if (editingDm) {
+        await updateDecisionMaker(editingDm.id, {
+          name: formData.name,
+          role: formData.role,
+          email: formData.email || undefined,
+          linkedin: formData.linkedin || undefined,
+          entry_source: formData.entry_source
+        });
+      } else {
+        await createDecisionMaker(prospect.id, {
+          name: formData.name,
+          role: formData.role,
+          email: formData.email || undefined,
+          linkedin: formData.linkedin || undefined,
+          entry_source: formData.entry_source
+        });
+      }
+      setIsOpen(false);
+      setEditingDm(null);
+      await onRefresh();
+    } catch (error) {
+      setMessage(readError(error));
+    }
+  }
+
+  async function handlePathSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setMessage("");
+    try {
+      if (editingPath) {
+        await updateContactPath(editingPath.id, {
+          type: pathFormData.type,
+          value: pathFormData.value,
+          source: pathFormData.source,
+          confidence: pathFormData.confidence,
+          verified: pathFormData.verified,
+          last_verified_at: pathFormData.last_verified_at || undefined
+        });
+      } else {
+        await createContactPath(activeDmIdForPath, {
+          type: pathFormData.type,
+          value: pathFormData.value,
+          source: pathFormData.source,
+          confidence: pathFormData.confidence,
+          verified: pathFormData.verified,
+          last_verified_at: pathFormData.last_verified_at || undefined
+        });
+      }
+      setIsPathOpen(false);
+      setEditingPath(null);
+      await onRefresh();
+    } catch (error) {
+      setMessage(readError(error));
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("Are you sure you want to delete this decision maker?")) return;
+    setMessage("");
+    try {
+      await deleteDecisionMaker(id);
+      await onRefresh();
+    } catch (error) {
+      setMessage(readError(error));
+    }
+  }
+
+  async function handleDeletePath(id: string) {
+    if (!confirm("Are you sure you want to delete this contact path?")) return;
+    setMessage("");
+    try {
+      await deleteContactPath(id);
+      await onRefresh();
+    } catch (error) {
+      setMessage(readError(error));
+    }
+  }
+
+  return (
+    <section className="border border-[#202c28] bg-[#0b0f10]">
+      <div className="flex items-center justify-between border-b border-[#202c28] px-4 py-3">
+        <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[0.12em] text-white">
+          <Target size={14} className="text-[#00e084]" />
+          Decision Makers (Buyer Authority)
+        </div>
+        <button
+          className="inline-flex h-7 items-center justify-center gap-1 border border-[#00b86b] bg-[#07351f] px-3 font-mono text-[10px] uppercase text-[#00e084] hover:bg-[#00b86b] hover:text-black transition-colors"
+          onClick={openAddModal}
+          type="button"
+        >
+          <Plus size={10} /> Add Contact
+        </button>
+      </div>
+
+      <div className="p-4">
+        {decisionMakers.length === 0 ? (
+          <div className="p-8 text-center text-[#74837c] font-mono text-xs border border-[#202c28] bg-[#101516]/30">
+            NO DECISION MAKERS CAPTURED FOR THIS PROSPECT.
+            <div className="mt-2 text-[10px] text-[#54635c]">
+              Use "Add Contact" above to manually insert key personnel.
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2">
+            {decisionMakers.map((dm) => (
+              <div key={dm.id} className="border border-[#202c28] bg-[#101516] p-4 flex flex-col justify-between hover:border-[#00e084]/40 transition-colors">
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold text-white">{dm.name}</div>
+                      <div className="font-mono text-xs text-[#00c8ff]">{dm.role}</div>
+                    </div>
+                    <div className={`px-2 py-1 border font-mono text-xs font-bold ${
+                      dm.authority_score >= 90 ? "border-[#00e084] bg-[#00e084]/10 text-[#00e084]" :
+                      dm.authority_score >= 50 ? "border-[#ffb020] bg-[#ffb020]/10 text-[#ffb020]" :
+                      "border-[#ff5d55] bg-[#ff5d55]/10 text-[#ff5d55]"
+                    }`}>
+                      {dm.authority_score} PTS
+                    </div>
+                  </div>
+                  
+                  {dm.acquisition_rationale && (
+                    <div className="mt-3 text-xs text-[#74837c] bg-[#0b0f10] p-2 border border-[#202c28] leading-relaxed">
+                      {dm.acquisition_rationale}
+                    </div>
+                  )}
+
+                  {/* Contact Paths subsection */}
+                  <div className="mt-4 border-t border-[#202c28]/60 pt-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="font-mono text-[9px] uppercase tracking-[0.1em] text-[#74837c]">
+                        Contact Paths ({dm.contact_paths?.length || 0})
+                      </div>
+                      <button
+                        onClick={() => openAddPathModal(dm.id)}
+                        className="font-mono text-[9px] uppercase text-[#00e084] hover:text-white transition-colors"
+                        type="button"
+                      >
+                        + Add Path
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-1.5">
+                      {dm.contact_paths && dm.contact_paths.length > 0 ? (
+                        dm.contact_paths.map((path) => (
+                          <div key={path.id} className="group/path flex items-center justify-between border border-[#202c28] bg-[#0b0f10] px-2 py-1 hover:border-[#00e084]/20 transition-colors">
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="font-mono text-[8px] text-[#00c8ff] border border-[#00c8ff]/20 bg-[#00c8ff]/5 px-1.5 py-0.2">
+                                {path.type}
+                              </span>
+                              <span className="font-mono break-all text-white max-w-[150px] md:max-w-none">
+                                {path.type === "EMAIL" ? (
+                                  <a href={`mailto:${path.value}`} className="hover:underline">{path.value}</a>
+                                ) : path.type === "LINKEDIN" ? (
+                                  <a href={path.value.startsWith("http") ? path.value : `https://${path.value}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{path.value}</a>
+                                ) : (
+                                  <span>{path.value}</span>
+                                )}
+                              </span>
+                              {path.verified ? (
+                                <span className="text-[#00e084] font-mono text-[8px]" title={path.last_verified_at ? `Verified at ${path.last_verified_at}` : "Verified"}>
+                                  ✓ [V]
+                                </span>
+                              ) : (
+                                <span className="text-[#ff5d55] font-mono text-[8px]">[U]</span>
+                              )}
+                              <span className="text-[10px] text-[#74837c]">
+                                ({path.confidence}%)
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-1 opacity-0 group-hover/path:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => handleEditPath(path)}
+                                className="font-mono text-[8px] uppercase text-[#aebbb4] hover:text-[#00e084] transition-colors"
+                                type="button"
+                              >
+                                Edit
+                              </button>
+                              <span className="text-[#202c28] text-[8px]">|</span>
+                              <button
+                                onClick={() => handleDeletePath(path.id)}
+                                className="font-mono text-[8px] uppercase text-[#74837c] hover:text-[#ff5d55] transition-colors"
+                                type="button"
+                              >
+                                Del
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-[10px] text-[#54635c] italic font-mono">
+                          No contact channels defined.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[#202c28]/50 pt-3">
+                  <div className="flex items-center gap-2">
+                    {dm.email && (
+                      <a href={`mailto:${dm.email}`} className="font-mono text-[10px] text-[#00e084] border border-[#00e084]/20 bg-[#00e084]/5 px-2 py-0.5 hover:bg-[#00e084]/20 transition-colors">
+                        EMAIL
+                      </a>
+                    )}
+                    {dm.linkedin && (
+                      <a href={dm.linkedin} target="_blank" rel="noopener noreferrer" className="font-mono text-[10px] text-[#00c8ff] border border-[#00c8ff]/20 bg-[#00c8ff]/5 px-2 py-0.5 hover:bg-[#00c8ff]/20 transition-colors">
+                        LINKEDIN
+                      </a>
+                    )}
+                    <span className="font-mono text-[9px] text-[#74837c] uppercase">
+                      src: {dm.entry_source}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleEdit(dm)}
+                      className="font-mono text-[10px] uppercase text-[#aebbb4] hover:text-[#00e084] transition-colors flex items-center gap-1"
+                      type="button"
+                    >
+                      <Edit2 size={10} /> Edit
+                    </button>
+                    <span className="text-[#202c28]">|</span>
+                    <button
+                      onClick={() => handleDelete(dm.id)}
+                      className="font-mono text-[10px] uppercase text-[#74837c] hover:text-[#ff5d55] transition-colors flex items-center gap-1"
+                      type="button"
+                    >
+                      <Trash2 size={10} /> Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md border border-[#1d2825] bg-[#0d1111] p-6 shadow-[0_0_50px_rgba(0,255,150,0.1)]">
+            <div className="mb-4 flex items-center justify-between border-b border-[#1d2825] pb-3">
+              <h3 className="font-mono text-sm font-bold uppercase tracking-[0.14em] text-[#00d277]">
+                {editingDm ? "Edit Decision Maker" : "Add Decision Maker"}
+              </h3>
+              <button
+                onClick={closeModal}
+                className="text-[#74837c] hover:text-white font-mono text-xs transition-colors"
+                type="button"
+              >
+                [CLOSE]
+              </button>
+            </div>
+            
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <label className="block">
+                <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">
+                  Full Name *
+                </span>
+                <input
+                  className="h-9 w-full border border-[#293733] bg-[#121516] px-3 text-sm text-white focus:border-[#00e084] focus:outline-none transition-colors"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  required
+                  placeholder="e.g. Jane Doe"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">
+                  Role/Title *
+                </span>
+                <input
+                  className="h-9 w-full border border-[#293733] bg-[#121516] px-3 text-sm text-white focus:border-[#00e084] focus:outline-none transition-colors"
+                  value={formData.role}
+                  onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+                  required
+                  placeholder="e.g. Founder & CEO"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">
+                  Email Address
+                </span>
+                <input
+                  className="h-9 w-full border border-[#293733] bg-[#121516] px-3 text-sm text-white focus:border-[#00e084] focus:outline-none transition-colors"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  type="email"
+                  placeholder="e.g. jane@company.com"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">
+                  LinkedIn URL
+                </span>
+                <input
+                  className="h-9 w-full border border-[#293733] bg-[#121516] px-3 text-sm text-white focus:border-[#00e084] focus:outline-none transition-colors"
+                  value={formData.linkedin}
+                  onChange={(e) => setFormData({ ...formData, linkedin: e.target.value })}
+                  placeholder="e.g. https://linkedin.com/in/janedoe"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">
+                  Entry Source
+                </span>
+                <select
+                  className="h-9 w-full border border-[#293733] bg-[#121516] px-2 font-mono text-xs text-white focus:border-[#00e084] focus:outline-none transition-colors"
+                  value={formData.entry_source}
+                  onChange={(e) => setFormData({ ...formData, entry_source: e.target.value })}
+                >
+                  <option value="MANUAL">MANUAL</option>
+                  <option value="APOLLO">APOLLO</option>
+                  <option value="ROCKETREACH">ROCKETREACH</option>
+                  <option value="HUNTER">HUNTER</option>
+                  <option value="LINKEDIN">LINKEDIN</option>
+                  <option value="WEBSITE">WEBSITE</option>
+                </select>
+              </label>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-[#1d2825]">
+                <button
+                  onClick={closeModal}
+                  className="h-9 px-4 border border-[#293733] bg-[#101516] text-[#aebbb4] font-mono text-xs uppercase hover:text-white transition-colors"
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="h-9 px-4 border border-[#00b86b] bg-[#07351f] text-[#00e084] font-mono text-xs uppercase hover:bg-[#00b86b] hover:text-black transition-colors"
+                  type="submit"
+                >
+                  Save Contact
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isPathOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md border border-[#1d2825] bg-[#0d1111] p-6 shadow-[0_0_50px_rgba(0,255,150,0.1)]">
+            <div className="mb-4 flex items-center justify-between border-b border-[#1d2825] pb-3">
+              <h3 className="font-mono text-sm font-bold uppercase tracking-[0.14em] text-[#00d277]">
+                {editingPath ? "Edit Contact Path" : "Add Contact Path"}
+              </h3>
+              <button
+                onClick={closePathModal}
+                className="text-[#74837c] hover:text-white font-mono text-xs transition-colors"
+                type="button"
+              >
+                [CLOSE]
+              </button>
+            </div>
+
+            <form onSubmit={handlePathSubmit} className="space-y-4">
+              <label className="block">
+                <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">
+                  Path Type *
+                </span>
+                <select
+                  className="h-9 w-full border border-[#293733] bg-[#121516] px-2 font-mono text-xs text-white focus:border-[#00e084] focus:outline-none transition-colors"
+                  value={pathFormData.type}
+                  onChange={(e) => setPathFormData({ ...pathFormData, type: e.target.value as ContactPathType })}
+                >
+                  <option value="EMAIL">EMAIL</option>
+                  <option value="LINKEDIN">LINKEDIN</option>
+                  <option value="PHONE">PHONE</option>
+                  <option value="WEBSITE_FORM">WEBSITE_FORM</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">
+                  Address / Value *
+                </span>
+                <input
+                  className="h-9 w-full border border-[#293733] bg-[#121516] px-3 text-sm text-white focus:border-[#00e084] focus:outline-none transition-colors"
+                  value={pathFormData.value}
+                  onChange={(e) => setPathFormData({ ...pathFormData, value: e.target.value })}
+                  required
+                  placeholder="e.g. name@domain.com or URL"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">
+                  Data Source
+                </span>
+                <select
+                  className="h-9 w-full border border-[#293733] bg-[#121516] px-2 font-mono text-xs text-white focus:border-[#00e084] focus:outline-none transition-colors"
+                  value={pathFormData.source}
+                  onChange={(e) => setPathFormData({ ...pathFormData, source: e.target.value })}
+                >
+                  <option value="MANUAL">MANUAL</option>
+                  <option value="APOLLO">APOLLO</option>
+                  <option value="ROCKETREACH">ROCKETREACH</option>
+                  <option value="HUNTER">HUNTER</option>
+                  <option value="LINKEDIN">LINKEDIN</option>
+                  <option value="WEBSITE">WEBSITE</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">
+                  Confidence Score (0-100) *
+                </span>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  className="h-9 w-full border border-[#293733] bg-[#121516] px-3 text-sm text-white focus:border-[#00e084] focus:outline-none transition-colors"
+                  value={pathFormData.confidence}
+                  onChange={(e) => setPathFormData({ ...pathFormData, confidence: Number(e.target.value) })}
+                  required
+                />
+              </label>
+
+              <div className="flex items-center gap-6 py-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="accent-[#00e084]"
+                    checked={pathFormData.verified}
+                    onChange={(e) => {
+                      const nowStr = e.target.checked ? new Date().toISOString() : "";
+                      setPathFormData({
+                        ...pathFormData,
+                        verified: e.target.checked,
+                        last_verified_at: nowStr
+                      });
+                    }}
+                  />
+                  <span className="font-mono text-xs text-[#dbe5df] select-none">Verified Channel</span>
+                </label>
+              </div>
+
+              {pathFormData.verified && (
+                <label className="block">
+                  <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">
+                    Last Verified Timestamp (ISO)
+                  </span>
+                  <input
+                    className="h-9 w-full border border-[#293733] bg-[#121516] px-3 text-sm text-white focus:border-[#00e084] focus:outline-none transition-colors"
+                    value={pathFormData.last_verified_at}
+                    onChange={(e) => setPathFormData({ ...pathFormData, last_verified_at: e.target.value })}
+                    placeholder="e.g. ISO-8601 string"
+                  />
+                </label>
+              )}
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-[#1d2825]">
+                <button
+                  onClick={closePathModal}
+                  className="h-9 px-4 border border-[#293733] bg-[#101516] text-[#aebbb4] font-mono text-xs uppercase hover:text-white transition-colors"
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="h-9 px-4 border border-[#00b86b] bg-[#07351f] text-[#00e084] font-mono text-xs uppercase hover:bg-[#00b86b] hover:text-black transition-colors"
+                  type="submit"
+                >
+                  Save Path
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

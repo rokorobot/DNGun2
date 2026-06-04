@@ -84,6 +84,48 @@ def migrate(db_path: Path | None = None) -> None:
                 (seg_id, code, label, pdm_code, "ACTIVE", now_iso),
             )
 
+    # Create decision_makers table if missing
+    if not table_exists(connection, "decision_makers"):
+        print("Creating table: decision_makers")
+        cursor.execute(
+            """
+            CREATE TABLE decision_makers (
+                id TEXT PRIMARY KEY,
+                prospect_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                email TEXT,
+                linkedin TEXT,
+                authority_score INTEGER NOT NULL,
+                acquisition_rationale TEXT,
+                entry_source TEXT NOT NULL DEFAULT 'MANUAL',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (prospect_id) REFERENCES prospects (id) ON DELETE CASCADE
+            )
+            """
+        )
+
+    # Create contact_paths table if missing
+    if not table_exists(connection, "contact_paths"):
+        print("Creating table: contact_paths")
+        cursor.execute(
+            """
+            CREATE TABLE contact_paths (
+                id TEXT PRIMARY KEY,
+                decision_maker_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                value TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'MANUAL',
+                confidence REAL NOT NULL DEFAULT 100.0,
+                verified INTEGER NOT NULL DEFAULT 0,
+                last_verified_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (decision_maker_id) REFERENCES decision_makers (id) ON DELETE CASCADE
+            )
+            """
+        )
+
     # 2. Add scoping/indexing fields to evidence_entries
     columns = get_existing_columns(connection, "evidence_entries")
     if columns:
@@ -116,13 +158,15 @@ def migrate(db_path: Path | None = None) -> None:
 
     # 4. Create Indexes for Latest Scores and Outcomes queries
     # SQLite does "CREATE INDEX IF NOT EXISTS" natively
-    print("Creating indexes on prospect_scores and campaign_outcomes...")
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_prospect_scores_lookup ON prospect_scores (prospect_id, calculated_at DESC)"
-    )
-    cursor.execute(
-        "CREATE INDEX IF NOT EXISTS idx_campaign_outcomes_lookup ON campaign_outcomes (prospect_id, recorded_at DESC)"
-    )
+    print("Creating indexes on prospect_scores and campaign_outcomes if tables exist...")
+    if table_exists(connection, "prospect_scores"):
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_prospect_scores_lookup ON prospect_scores (prospect_id, calculated_at DESC)"
+        )
+    if table_exists(connection, "campaign_outcomes"):
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_campaign_outcomes_lookup ON campaign_outcomes (prospect_id, recorded_at DESC)"
+        )
 
     connection.commit()
     connection.close()

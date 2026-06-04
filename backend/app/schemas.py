@@ -459,3 +459,49 @@ class SegmentRegistry(ApiModel, SegmentRegistryCreate):
     id: str
     created_at: str
 
+
+class DecisionMakerCreate(BaseModel):
+    name: str = Field(min_length=1)
+    role: str = Field(min_length=1)
+    email: str | None = None
+    linkedin: str | None = None
+    entry_source: str = "MANUAL"
+
+
+class DecisionMaker(ApiModel):
+    id: str
+    prospect_id: str
+    name: str
+    role: str
+    email: str | None
+    linkedin: str | None
+    authority_score: int
+    acquisition_rationale: str | None
+    entry_source: str
+    created_at: str
+    updated_at: str
+    contact_paths: list[ContactPath] = []
+
+
+class ContactPathType(StrEnum):
+    EMAIL = "EMAIL"
+    LINKEDIN = "LINKEDIN"
+    PHONE = "PHONE"
+    WEBSITE_FORM = "WEBSITE_FORM"
+
+
+class ContactPathCreate(BaseModel):
+    type: ContactPathType
+    value: str = Field(min_length=1)
+    source: str = "MANUAL"
+    confidence: float = Field(default=100.0, ge=0.0, le=100.0)
+    verified: bool = False
+    last_verified_at: str | None = None
+
+
+class ContactPath(ApiModel, ContactPathCreate):
+    id: str
+    decision_maker_id: str
+    created_at: str
+
+

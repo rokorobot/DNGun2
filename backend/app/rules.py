@@ -36,6 +36,26 @@ class RuleRegistry:
             top_level_key="disqualifiers",
             required_fields={"code", "name", "signal_type", "reason"},
         )
+        
+        # Safe authority rules load: fallback to global RULES_DIR if missing in test custom dirs
+        auth_filename = "authority_rules.yaml"
+        auth_dir = self.rules_dir
+        if not (self.rules_dir / auth_filename).exists() and RULES_DIR != self.rules_dir:
+            auth_dir = RULES_DIR
+            
+        if (auth_dir / auth_filename).exists():
+            original_dir = self.rules_dir
+            self.rules_dir = auth_dir
+            try:
+                self._authority_rules = self._load_rule_file(
+                    auth_filename,
+                    top_level_key="authority_rules",
+                    required_fields={"role_keywords", "score", "acquisition_rationale"},
+                )
+            finally:
+                self.rules_dir = original_dir
+        else:
+            self._authority_rules = []
         self._tier_multipliers = self._load_tier_multipliers()
 
     def all_rules(self) -> dict[str, Any]:
@@ -45,6 +65,7 @@ class RuleRegistry:
             "signal_taxonomy": self.signal_taxonomy(),
             "alpha_signals": self.alpha_signals(),
             "disqualifiers": self.disqualifiers(),
+            "authority_rules": self.authority_rules(),
         }
 
     def score_bands(self) -> list[dict[str, Any]]:
@@ -61,6 +82,9 @@ class RuleRegistry:
 
     def disqualifiers(self) -> list[dict[str, Any]]:
         return self._disqualifiers
+
+    def authority_rules(self) -> list[dict[str, Any]]:
+        return self._authority_rules
 
     def decision_for_score(self, score: int) -> str:
         for band in self.score_bands():

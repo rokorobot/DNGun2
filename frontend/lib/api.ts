@@ -538,3 +538,105 @@ export type CampaignOutcomePayload = {
   lost_deal: boolean;
   outcome_notes?: string;
 };
+
+export type DecisionMaker = {
+  id: string;
+  prospect_id: string;
+  name: string;
+  role: string;
+  email?: string | null;
+  linkedin?: string | null;
+  authority_score: number;
+  acquisition_rationale?: string | null;
+  entry_source: string;
+  created_at: string;
+  updated_at: string;
+  contact_paths: ContactPath[];
+};
+
+export type ContactPathType = "EMAIL" | "LINKEDIN" | "PHONE" | "WEBSITE_FORM";
+
+export type ContactPath = {
+  id: string;
+  decision_maker_id: string;
+  type: ContactPathType;
+  value: string;
+  source: string;
+  confidence: number;
+  verified: boolean;
+  last_verified_at?: string | null;
+  created_at: string;
+};
+
+export function listDecisionMakers(prospectId: string) {
+  return request<DecisionMaker[]>(`/prospects/${prospectId}/decision-makers`);
+}
+
+export function createDecisionMaker(
+  prospectId: string,
+  data: { name: string; role: string; email?: string; linkedin?: string; entry_source?: string }
+) {
+  return request<DecisionMaker>(`/prospects/${prospectId}/decision-makers`, {
+    method: "POST",
+    body: JSON.stringify({
+      entry_source: "MANUAL",
+      ...data
+    })
+  });
+}
+
+export function updateDecisionMaker(
+  id: string,
+  data: { name: string; role: string; email?: string; linkedin?: string; entry_source?: string }
+) {
+  return request<DecisionMaker>(`/decision-makers/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data)
+  });
+}
+
+export function deleteDecisionMaker(id: string) {
+  return fetch(`${API_BASE}/decision-makers/${id}`, {
+    method: "DELETE"
+  }).then((res) => {
+    if (!res.ok) throw new Error("Failed to delete decision maker");
+  });
+}
+
+export function listContactPaths(decisionMakerId: string) {
+  return request<ContactPath[]>(`/decision-makers/${decisionMakerId}/contact-paths`);
+}
+
+export function createContactPath(
+  decisionMakerId: string,
+  data: { type: ContactPathType; value: string; source?: string; confidence?: number; verified?: boolean; last_verified_at?: string | null }
+) {
+  return request<ContactPath>(`/decision-makers/${decisionMakerId}/contact-paths`, {
+    method: "POST",
+    body: JSON.stringify({
+      source: "MANUAL",
+      confidence: 100.0,
+      verified: false,
+      ...data
+    })
+  });
+}
+
+export function updateContactPath(
+  id: string,
+  data: { type: ContactPathType; value: string; source?: string; confidence?: number; verified?: boolean; last_verified_at?: string | null }
+) {
+  return request<ContactPath>(`/contact-paths/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data)
+  });
+}
+
+export function deleteContactPath(id: string) {
+  return fetch(`${API_BASE}/contact-paths/${id}`, {
+    method: "DELETE"
+  }).then((res) => {
+     if (!res.ok) throw new Error("Failed to delete contact path");
+  });
+}
+

@@ -41,6 +41,10 @@ from .schemas import (
     SignalCreate,
     SegmentRegistry,
     SegmentRegistryCreate,
+    DecisionMaker,
+    DecisionMakerCreate,
+    ContactPath,
+    ContactPathCreate,
     utc_now_iso,
 )
 
@@ -640,6 +644,122 @@ class Repository:
             .order_by(models.OfferProspectFitModel.total_fit_score.desc())
         ).all()
         return [self._offer_fit_from_model(row) for row in rows]
+
+    def create_decision_maker(
+        self,
+        prospect_id: str,
+        data: DecisionMakerCreate,
+        authority_score: int,
+        rationale: str | None,
+    ) -> DecisionMaker:
+        now = utc_now_iso()
+        model = models.DecisionMakerModel(
+            id=prefixed_id("DM"),
+            prospect_id=prospect_id,
+            name=data.name,
+            role=data.role,
+            email=data.email,
+            linkedin=data.linkedin,
+            authority_score=authority_score,
+            acquisition_rationale=rationale,
+            entry_source=data.entry_source,
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(model)
+        self.session.commit()
+        self.session.refresh(model)
+        return DecisionMaker.model_validate(model)
+
+    def list_decision_makers(self, prospect_id: str) -> list[DecisionMaker]:
+        statement = (
+            select(models.DecisionMakerModel)
+            .where(models.DecisionMakerModel.prospect_id == prospect_id)
+            .order_by(models.DecisionMakerModel.authority_score.desc())
+        )
+        rows = self.session.scalars(statement).all()
+        return [DecisionMaker.model_validate(row) for row in rows]
+
+    def get_decision_maker(self, decision_maker_id: str) -> DecisionMaker | None:
+        model = self.session.get(models.DecisionMakerModel, decision_maker_id)
+        return DecisionMaker.model_validate(model) if model else None
+
+    def update_decision_maker(
+        self,
+        decision_maker_id: str,
+        data: DecisionMakerCreate,
+        authority_score: int,
+        rationale: str | None,
+    ) -> DecisionMaker | None:
+        model = self.session.get(models.DecisionMakerModel, decision_maker_id)
+        if not model:
+            return None
+        model.name = data.name
+        model.role = data.role
+        model.email = data.email
+        model.linkedin = data.linkedin
+        model.authority_score = authority_score
+        model.acquisition_rationale = rationale
+        model.entry_source = data.entry_source
+        model.updated_at = utc_now_iso()
+        self.session.commit()
+        self.session.refresh(model)
+        return DecisionMaker.model_validate(model)
+
+    def delete_decision_maker(self, decision_maker_id: str) -> bool:
+        model = self.session.get(models.DecisionMakerModel, decision_maker_id)
+        if not model:
+            return False
+        self.session.delete(model)
+        self.session.commit()
+        return True
+
+    def create_contact_path(
+        self, decision_maker_id: str, data: ContactPathCreate
+    ) -> ContactPath:
+        model = models.ContactPathModel(
+            id=prefixed_id("CP"),
+            decision_maker_id=decision_maker_id,
+            created_at=utc_now_iso(),
+            **data.model_dump(mode="json"),
+        )
+        self.session.add(model)
+        self.session.commit()
+        self.session.refresh(model)
+        return ContactPath.model_validate(model)
+
+    def list_contact_paths(self, decision_maker_id: str) -> list[ContactPath]:
+        rows = self.session.scalars(
+            select(models.ContactPathModel)
+            .where(models.ContactPathModel.decision_maker_id == decision_maker_id)
+            .order_by(models.ContactPathModel.created_at.asc())
+        ).all()
+        return [ContactPath.model_validate(row) for row in rows]
+
+    def get_contact_path(self, contact_path_id: str) -> ContactPath | None:
+        model = self.session.get(models.ContactPathModel, contact_path_id)
+        return ContactPath.model_validate(model) if model else None
+
+    def update_contact_path(
+        self, contact_path_id: str, data: ContactPathCreate
+    ) -> ContactPath | None:
+        model = self.session.get(models.ContactPathModel, contact_path_id)
+        if not model:
+            return None
+        for key, value in data.model_dump(mode="json").items():
+            setattr(model, key, value)
+        self.session.commit()
+        self.session.refresh(model)
+        return ContactPath.model_validate(model)
+
+    def delete_contact_path(self, contact_path_id: str) -> bool:
+        model = self.session.get(models.ContactPathModel, contact_path_id)
+        if not model:
+            return False
+        self.session.delete(model)
+        self.session.commit()
+        return True
+
 
     def _clear_offer_profile_rows(self, offer_id: str) -> None:
         for model_class in [

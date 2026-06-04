@@ -30,6 +30,9 @@ class ProspectModel(Base):
     scores: Mapped[list[ProspectScoreModel]] = relationship(
         back_populates="prospect", cascade="all, delete-orphan"
     )
+    decision_makers: Mapped[list[DecisionMakerModel]] = relationship(
+        back_populates="prospect", cascade="all, delete-orphan"
+    )
 
 
 class SignalModel(Base):
@@ -387,4 +390,46 @@ class SegmentRegistryModel(Base):
     pdm_code: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="ACTIVE")
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class DecisionMakerModel(Base):
+    __tablename__ = "decision_makers"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    prospect_id: Mapped[str] = mapped_column(
+        ForeignKey("prospects.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    email: Mapped[str | None] = mapped_column(String)
+    linkedin: Mapped[str | None] = mapped_column(String)
+    authority_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    acquisition_rationale: Mapped[str | None] = mapped_column(Text)
+    entry_source: Mapped[str] = mapped_column(String, nullable=False, default="MANUAL")
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    prospect: Mapped[ProspectModel] = relationship(back_populates="decision_makers")
+    contact_paths: Mapped[list[ContactPathModel]] = relationship(
+        back_populates="decision_maker", cascade="all, delete-orphan"
+    )
+
+
+class ContactPathModel(Base):
+    __tablename__ = "contact_paths"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    decision_maker_id: Mapped[str] = mapped_column(
+        ForeignKey("decision_makers.id", ondelete="CASCADE"), nullable=False
+    )
+    type: Mapped[str] = mapped_column(String, nullable=False)
+    value: Mapped[str] = mapped_column(String, nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False, default="MANUAL")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
+    verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_verified_at: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    decision_maker: Mapped[DecisionMakerModel] = relationship(back_populates="contact_paths")
+
 

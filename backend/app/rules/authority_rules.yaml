@@ -1,0 +1,28 @@
+authority_rules:
+  - role_keywords: ["founder", "co-founder", "co founder"]
+    score: 95
+    acquisition_rationale: "Founder likely controls branding and domain acquisition decisions for early-stage company."
+  - role_keywords: ["ceo", "chief executive officer"]
+    score: 90
+    acquisition_rationale: "CEO holds direct branding and strategic domain approval capabilities."
+  - role_keywords: ["owner"]
+    score: 90
+    acquisition_rationale: "Owner possesses ultimate decision making authority for business assets."
+  - role_keywords: ["cmo", "vp marketing", "marketing director", "vp of marketing"]
+    score: 75
+    acquisition_rationale: "CMO/Marketing VP manages corporate branding and digital presence."
+  - role_keywords: ["growth", "head of growth"]
+    score: 75
+    acquisition_rationale: "Growth leaders drive user acquisition paths and category landing domains."
+  - role_keywords: ["business development", "bizdev", "bd director"]
+    score: 65
+    acquisition_rationale: "BizDev leaders explore brand alliances and domain positioning strategies."
+  - role_keywords: ["coo", "chief operating officer"]
+    score: 55
+    acquisition_rationale: "COO handles operations and corporate domain infrastructure."
+  - role_keywords: ["cto", "chief technology officer"]
+    score: 30
+    acquisition_rationale: "CTO manages technical infrastructure, but domain acquisition is strategic/brand-led."
+  - role_keywords: ["hr", "finance", "support", "admin", "recruiter", "accounting"]
+    score: 15
+    acquisition_rationale: "Operational/support role with minimal branding or domain purchasing influence."
