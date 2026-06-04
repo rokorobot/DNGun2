@@ -23,6 +23,7 @@ import {
   addSignal,
   AlphaSignalRule,
   approveOfferProposal,
+  calculateOfferProspectFits,
   calculateScore,
   CampaignBatch,
   CampaignBatchProspect,
@@ -59,7 +60,9 @@ import {
   Offer,
   OfferEvaluationProposal,
   OfferIntelligenceProfile,
+  OfferProspectFit,
   rejectOfferProposal,
+  listOfferProspectFits,
   updateCampaignOutcome
 } from "../lib/api";
 
@@ -87,6 +90,7 @@ export default function Home() {
   const [offerProposals, setOfferProposals] = useState<OfferEvaluationProposal[]>([]);
   const [selectedOfferProposal, setSelectedOfferProposal] = useState<OfferEvaluationProposal | null>(null);
   const [offerProfile, setOfferProfile] = useState<OfferIntelligenceProfile | null>(null);
+  const [offerFits, setOfferFits] = useState<OfferProspectFit[]>([]);
   const [alphaRules, setAlphaRules] = useState<AlphaSignalRule[]>([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -211,10 +215,12 @@ export default function Home() {
         } catch {
           setOfferProfile(null);
         }
+        setOfferFits(await listOfferProspectFits(activeOfferId));
       } else {
         setOfferProposals([]);
         setSelectedOfferProposal(null);
         setOfferProfile(null);
+        setOfferFits([]);
       }
     } catch (error) {
       setMessage(readError(error));
@@ -375,8 +381,10 @@ export default function Home() {
 
           {view === "offers" ? (
             <OfferIntelligenceWorkspace
+              fits={offerFits}
               offers={offers}
               profile={offerProfile}
+              prospects={prospects}
               proposals={offerProposals}
               selectedOfferId={selectedOfferId}
               selectedProposal={selectedOfferProposal}
@@ -459,7 +467,9 @@ export default function Home() {
 
 function OfferIntelligenceWorkspace({
   offers,
+  fits,
   profile,
+  prospects,
   proposals,
   selectedOfferId,
   selectedProposal,
@@ -469,7 +479,9 @@ function OfferIntelligenceWorkspace({
   setMessage
 }: {
   offers: Offer[];
+  fits: OfferProspectFit[];
   profile: OfferIntelligenceProfile | null;
+  prospects: Prospect[];
   proposals: OfferEvaluationProposal[];
   selectedOfferId: string;
   selectedProposal: OfferEvaluationProposal | null;
@@ -541,6 +553,17 @@ function OfferIntelligenceWorkspace({
     }
   }
 
+  async function calculateFits() {
+    if (!selectedOfferId) return;
+    setMessage("");
+    try {
+      await calculateOfferProspectFits(selectedOfferId);
+      await onRefresh(selectedOfferId);
+    } catch (error) {
+      setMessage(readError(error));
+    }
+  }
+
   return (
     <Panel title="Offer Intelligence" icon={<Radar size={15} />} action="human approval required">
       <div className="grid gap-4 2xl:grid-cols-[360px_minmax(0,1fr)]">
@@ -596,6 +619,12 @@ function OfferIntelligenceWorkspace({
           <OfferProposalPreview proposal={selectedProposal} />
           <OfferReviewPanel onApprove={approve} onReject={reject} proposal={selectedProposal} />
           <ApprovedOfferProfile profile={profile} />
+          <OfferProspectFitPanel
+            fits={fits}
+            onCalculate={calculateFits}
+            profile={profile}
+            prospects={prospects}
+          />
         </div>
       </div>
     </Panel>
@@ -698,6 +727,84 @@ function ApprovedOfferProfile({ profile }: { profile: OfferIntelligenceProfile |
           reasoning: [],
           alternative_categories: []
         }} />
+      </div>
+    </section>
+  );
+}
+
+function OfferProspectFitPanel({
+  fits,
+  onCalculate,
+  profile,
+  prospects
+}: {
+  fits: OfferProspectFit[];
+  onCalculate: () => Promise<void>;
+  profile: OfferIntelligenceProfile | null;
+  prospects: Prospect[];
+}) {
+  const prospectById = new Map(prospects.map((prospect) => [prospect.id, prospect]));
+  return (
+    <section className="border border-[#202c28] bg-[#0b0f10]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#202c28] px-4 py-3">
+        <div className="font-mono text-xs font-bold uppercase tracking-[0.12em] text-white">
+          Offer-to-Prospect Fit
+        </div>
+        <button className="inline-flex h-8 items-center justify-center gap-2 border border-[#00a9d6] bg-[#062633] px-3 font-mono text-xs uppercase text-[#00c8ff] disabled:opacity-40" disabled={!profile} onClick={() => void onCalculate()} type="button">
+          <Radar size={13} /> Calculate Prospect Fit
+        </button>
+      </div>
+      <div className="overflow-auto">
+        <table className="w-full min-w-[980px] border-collapse">
+          <thead className="bg-[#0d1413]">
+            <tr>
+              <Th>Prospect</Th>
+              <Th>Decision</Th>
+              <Th>Total</Th>
+              <Th>Segment</Th>
+              <Th>Buyer</Th>
+              <Th>Signal</Th>
+              <Th>Explanation</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {fits.map((fit) => {
+              const prospect = prospectById.get(fit.prospect_id);
+              return (
+                <tr className="bg-[#080d0d] hover:bg-[#0d1514]" key={fit.id}>
+                  <Td>
+                    <div className="font-mono text-sm text-white">{prospect?.company_name ?? fit.prospect_id}</div>
+                    <div className="mt-1 font-mono text-[10px] text-[#74837c]">{fit.prospect_id}</div>
+                  </Td>
+                  <Td mono>
+                    <span className={fit.decision === "STRONG_FIT" ? "text-[#00e084]" : fit.decision === "DISQUALIFIED" ? "text-[#ff5d55]" : "text-[#ffb020]"}>
+                      {fit.decision}
+                    </span>
+                  </Td>
+                  <Td mono>{fit.total_fit_score}</Td>
+                  <Td mono>{fit.segment_fit_score}</Td>
+                  <Td mono>{fit.buyer_profile_fit_score}</Td>
+                  <Td mono>{fit.signal_fit_score}</Td>
+                  <Td>
+                    <details>
+                      <summary className="cursor-pointer font-mono text-xs uppercase text-[#00c8ff]">Open</summary>
+                      <div className="mt-2 space-y-1">
+                        {fit.explanation.map((item) => (
+                          <div className="text-xs text-[#dce8e1]" key={item}>{item}</div>
+                        ))}
+                      </div>
+                    </details>
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {fits.length === 0 ? (
+          <div className="border-t border-[#202c28] p-6 text-center font-mono text-xs uppercase text-[#74837c]">
+            No offer-prospect fits calculated
+          </div>
+        ) : null}
       </div>
     </section>
   );

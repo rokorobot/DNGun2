@@ -15,6 +15,7 @@ from .learning import (
     render_learning_markdown,
 )
 from .offer_intelligence import generate_offer_hypothesis
+from .offer_fit import calculate_offer_prospect_fit
 from .offer_llm import DEFAULT_MODEL, generate_llm_offer_evaluation
 from .repository import Repository, RepositoryConflictError
 from .reporting import (
@@ -43,6 +44,7 @@ from .schemas import (
     OfferEvaluationRequest,
     OfferIntelligenceProfile,
     OfferProposalReview,
+    OfferProspectFit,
     Prospect,
     ProspectAlphaSignal,
     ProspectAlphaSignalCreate,
@@ -492,6 +494,39 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         if profile is None:
             raise HTTPException(status_code=404, detail="Offer intelligence profile not found")
         return profile
+
+    @app.post(
+        "/offers/{offer_id}/fit/prospects",
+        response_model=list[OfferProspectFit],
+    )
+    def calculate_offer_prospect_fits(
+        offer_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> list[OfferProspectFit]:
+        require_offer(repository, offer_id)
+        profile = repository.get_offer_intelligence_profile(offer_id)
+        if profile is None:
+            raise HTTPException(status_code=409, detail="Approved offer profile required")
+        fits = [
+            calculate_offer_prospect_fit(
+                offer_profile=profile,
+                prospect=prospect,
+                signals=repository.list_signals(prospect.id),
+            )
+            for prospect in repository.list_prospects()
+        ]
+        return repository.replace_offer_prospect_fits(offer_id, fits)
+
+    @app.get(
+        "/offers/{offer_id}/fit/prospects",
+        response_model=list[OfferProspectFit],
+    )
+    def list_offer_prospect_fits(
+        offer_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> list[OfferProspectFit]:
+        require_offer(repository, offer_id)
+        return repository.list_offer_prospect_fits(offer_id)
 
     return app
 

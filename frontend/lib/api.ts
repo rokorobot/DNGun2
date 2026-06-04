@@ -256,6 +256,19 @@ export type OfferIntelligenceProfile = {
   };
 };
 
+export type OfferProspectFit = {
+  id: string;
+  offer_id: string;
+  prospect_id: string;
+  segment_fit_score: number;
+  buyer_profile_fit_score: number;
+  signal_fit_score: number;
+  total_fit_score: number;
+  decision: "STRONG_FIT" | "POSSIBLE_FIT" | "WEAK_FIT" | "DISQUALIFIED";
+  explanation: string[];
+  created_at: string;
+};
+
 export type AlphaSignalRule = {
   code: string;
   name: string;
@@ -439,6 +452,16 @@ export function rejectOfferProposal(offerId: string, proposalId: string, review_
 
 export function getOfferIntelligenceProfile(offerId: string) {
   return request<OfferIntelligenceProfile>(`/offers/${offerId}/intelligence-profile`);
+}
+
+export function calculateOfferProspectFits(offerId: string) {
+  return request<OfferProspectFit[]>(`/offers/${offerId}/fit/prospects`, {
+    method: "POST"
+  });
+}
+
+export function listOfferProspectFits(offerId: string) {
+  return request<OfferProspectFit[]>(`/offers/${offerId}/fit/prospects`);
 }
 
 export async function getLearningMarkdown() {

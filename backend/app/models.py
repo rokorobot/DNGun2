@@ -333,3 +333,28 @@ class OfferEvaluationProposalModel(Base):
     review_notes: Mapped[str | None] = mapped_column(Text)
 
     offer: Mapped[OfferModel] = relationship()
+
+
+class OfferProspectFitModel(Base):
+    __tablename__ = "offer_prospect_fits"
+    __table_args__ = (
+        UniqueConstraint("offer_id", "prospect_id", name="uq_offer_prospect_fit"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    offer_id: Mapped[str] = mapped_column(
+        ForeignKey("offers.id", ondelete="CASCADE"), nullable=False
+    )
+    prospect_id: Mapped[str] = mapped_column(
+        ForeignKey("prospects.id", ondelete="CASCADE"), nullable=False
+    )
+    segment_fit_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    buyer_profile_fit_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    signal_fit_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_fit_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    decision: Mapped[str] = mapped_column(String, nullable=False)
+    explanation: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    offer: Mapped[OfferModel] = relationship()
+    prospect: Mapped[ProspectModel] = relationship()

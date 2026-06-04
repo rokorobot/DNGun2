@@ -67,6 +67,13 @@ class OfferProposalStatus(StrEnum):
     SUPERSEDED = "SUPERSEDED"
 
 
+class OfferFitDecision(StrEnum):
+    STRONG_FIT = "STRONG_FIT"
+    POSSIBLE_FIT = "POSSIBLE_FIT"
+    WEAK_FIT = "WEAK_FIT"
+    DISQUALIFIED = "DISQUALIFIED"
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -401,3 +408,16 @@ class OfferEvaluationProposal(ApiModel):
     created_at: str
     reviewed_at: str | None = None
     review_notes: str | None = None
+
+
+class OfferProspectFit(BaseModel):
+    id: str
+    offer_id: str
+    prospect_id: str
+    segment_fit_score: int
+    buyer_profile_fit_score: int
+    signal_fit_score: int
+    total_fit_score: int
+    decision: OfferFitDecision
+    explanation: list[str]
+    created_at: str

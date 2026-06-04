@@ -25,6 +25,7 @@ from .schemas import (
     OfferEvaluationProposal,
     OfferIntelligenceProfile,
     OfferPdm,
+    OfferProspectFit,
     OfferProfile,
     OfferProposalStatus,
     OfferSignalProfile,
@@ -561,6 +562,42 @@ class Repository:
             pdm=self._offer_pdm_from_model(pdm),
         )
 
+    def replace_offer_prospect_fits(
+        self, offer_id: str, fits: list[OfferProspectFit]
+    ) -> list[OfferProspectFit]:
+        existing = self.session.scalars(
+            select(models.OfferProspectFitModel).where(
+                models.OfferProspectFitModel.offer_id == offer_id
+            )
+        ).all()
+        for row in existing:
+            self.session.delete(row)
+        for fit in fits:
+            self.session.add(
+                models.OfferProspectFitModel(
+                    id=prefixed_id("OPF"),
+                    offer_id=fit.offer_id,
+                    prospect_id=fit.prospect_id,
+                    segment_fit_score=fit.segment_fit_score,
+                    buyer_profile_fit_score=fit.buyer_profile_fit_score,
+                    signal_fit_score=fit.signal_fit_score,
+                    total_fit_score=fit.total_fit_score,
+                    decision=fit.decision,
+                    explanation=json.dumps(fit.explanation),
+                    created_at=utc_now_iso(),
+                )
+            )
+        self.session.commit()
+        return self.list_offer_prospect_fits(offer_id)
+
+    def list_offer_prospect_fits(self, offer_id: str) -> list[OfferProspectFit]:
+        rows = self.session.scalars(
+            select(models.OfferProspectFitModel)
+            .where(models.OfferProspectFitModel.offer_id == offer_id)
+            .order_by(models.OfferProspectFitModel.total_fit_score.desc())
+        ).all()
+        return [self._offer_fit_from_model(row) for row in rows]
+
     def _clear_offer_profile_rows(self, offer_id: str) -> None:
         for model_class in [
             models.OfferProfileModel,
@@ -674,4 +711,19 @@ class Repository:
             created_at=model.created_at,
             reviewed_at=model.reviewed_at,
             review_notes=model.review_notes,
+        )
+
+    @staticmethod
+    def _offer_fit_from_model(model: models.OfferProspectFitModel) -> OfferProspectFit:
+        return OfferProspectFit(
+            id=model.id,
+            offer_id=model.offer_id,
+            prospect_id=model.prospect_id,
+            segment_fit_score=model.segment_fit_score,
+            buyer_profile_fit_score=model.buyer_profile_fit_score,
+            signal_fit_score=model.signal_fit_score,
+            total_fit_score=model.total_fit_score,
+            decision=model.decision,
+            explanation=json.loads(model.explanation or "[]"),
+            created_at=model.created_at,
         )
