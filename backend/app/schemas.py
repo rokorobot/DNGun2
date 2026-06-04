@@ -43,6 +43,30 @@ class CampaignBatchStatus(StrEnum):
     ARCHIVED = "ARCHIVED"
 
 
+class OfferType(StrEnum):
+    DOMAIN_NAME = "DOMAIN_NAME"
+
+
+class OfferStatus(StrEnum):
+    DRAFT = "DRAFT"
+    PROPOSED = "PROPOSED"
+    PROFILED = "PROFILED"
+    VALIDATING = "VALIDATING"
+    ARCHIVED = "ARCHIVED"
+
+
+class OfferEvaluationMode(StrEnum):
+    DETERMINISTIC = "DETERMINISTIC"
+    LLM_ASSISTED = "LLM_ASSISTED"
+
+
+class OfferProposalStatus(StrEnum):
+    PENDING_REVIEW = "PENDING_REVIEW"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    SUPERSEDED = "SUPERSEDED"
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -290,3 +314,90 @@ class LearningSummaryRead(BaseModel):
     weakAlphaSignals: list[AlphaSignalPerformanceRead]
     scoreBandValidation: list[ScoreBandValidationRead]
     recommendedRuleChanges: list[str]
+
+
+class OfferCreate(BaseModel):
+    name: str = Field(min_length=1)
+    offer_type: OfferType = OfferType.DOMAIN_NAME
+    description: str | None = None
+    estimated_value: float | None = Field(default=None, ge=0)
+    status: OfferStatus = OfferStatus.DRAFT
+
+
+class Offer(ApiModel, OfferCreate):
+    id: str
+    created_at: str
+
+
+class OfferProfile(ApiModel):
+    id: str
+    offer_id: str
+    offer_category: str
+    commercial_hypothesis: str
+    predicted_value_range: str
+    target_segments: list[str] = Field(default_factory=list)
+    created_at: str
+
+
+class OfferBuyerProfile(ApiModel):
+    id: str
+    offer_id: str
+    profile_name: str
+    rationale: str
+    priority: int
+    created_at: str
+
+
+class OfferSignalProfile(ApiModel):
+    id: str
+    offer_id: str
+    signal_name: str
+    tier: Literal[1, 2, 3]
+    rationale: str
+    created_at: str
+
+
+class OfferPdm(ApiModel):
+    id: str
+    offer_id: str
+    code: str
+    name: str
+    summary: str
+    target_segments: list[str] = Field(default_factory=list)
+    created_at: str
+
+
+class OfferIntelligenceProfile(BaseModel):
+    offer: Offer
+    profile: OfferProfile
+    buyerProfiles: list[OfferBuyerProfile]
+    signalProfiles: list[OfferSignalProfile]
+    pdm: OfferPdm
+
+
+class OfferEvaluationRequest(BaseModel):
+    mode: OfferEvaluationMode = OfferEvaluationMode.DETERMINISTIC
+
+
+class OfferProposalReview(BaseModel):
+    review_notes: str | None = None
+
+
+class OfferEvaluationProposal(ApiModel):
+    id: str
+    offer_id: str
+    provider: str
+    model: str | None = None
+    mode: OfferEvaluationMode
+    raw_domain: str
+    normalized_domain: str
+    primary_category: str
+    confidence_score: float
+    confidence_label: str
+    reasoning: list[str]
+    alternative_categories: list[str]
+    proposed_profile_json: dict
+    status: OfferProposalStatus
+    created_at: str
+    reviewed_at: str | None = None
+    review_notes: str | None = None

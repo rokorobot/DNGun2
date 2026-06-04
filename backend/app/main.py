@@ -14,6 +14,8 @@ from .learning import (
     calculate_signal_performance,
     render_learning_markdown,
 )
+from .offer_intelligence import generate_offer_hypothesis
+from .offer_llm import DEFAULT_MODEL, generate_llm_offer_evaluation
 from .repository import Repository, RepositoryConflictError
 from .reporting import (
     build_campaign_intelligence_report,
@@ -34,6 +36,13 @@ from .schemas import (
     EvidenceEntry,
     EvidenceEntryCreate,
     LearningSummaryRead,
+    Offer,
+    OfferCreate,
+    OfferEvaluationMode,
+    OfferEvaluationProposal,
+    OfferEvaluationRequest,
+    OfferIntelligenceProfile,
+    OfferProposalReview,
     Prospect,
     ProspectAlphaSignal,
     ProspectAlphaSignalCreate,
@@ -357,6 +366,133 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     ) -> str:
         return render_learning_markdown(calculate_learning_summary(session))
 
+    @app.post("/offers", response_model=Offer, status_code=201)
+    def create_offer(
+        data: OfferCreate,
+        repository: Repository = Depends(get_repository),
+    ) -> Offer:
+        return repository.create_offer(data)
+
+    @app.get("/offers", response_model=list[Offer])
+    def list_offers(repository: Repository = Depends(get_repository)) -> list[Offer]:
+        return repository.list_offers()
+
+    @app.get("/offers/{offer_id}", response_model=Offer)
+    def get_offer(
+        offer_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> Offer:
+        offer = repository.get_offer(offer_id)
+        if offer is None:
+            raise HTTPException(status_code=404, detail="Offer not found")
+        return offer
+
+    @app.post(
+        "/offers/{offer_id}/evaluate",
+        response_model=OfferEvaluationProposal,
+        status_code=201,
+    )
+    def evaluate_offer(
+        offer_id: str,
+        data: OfferEvaluationRequest,
+        repository: Repository = Depends(get_repository),
+    ) -> OfferEvaluationProposal:
+        offer = require_offer(repository, offer_id)
+        provider = "deterministic"
+        model_name = None
+        proposal = _deterministic_offer_proposal(offer.name)
+        if data.mode == OfferEvaluationMode.LLM_ASSISTED:
+            llm_proposal = generate_llm_offer_evaluation(offer.name)
+            if llm_proposal:
+                proposal = _normalize_llm_offer_proposal(llm_proposal)
+                provider = "openai"
+                model_name = DEFAULT_MODEL
+        return repository.create_offer_evaluation_proposal(
+            offer_id=offer.id,
+            provider=provider,
+            model_name=model_name,
+            mode=data.mode.value,
+            raw_domain=offer.name,
+            normalized_domain=_normalize_domain(offer.name),
+            proposal=proposal,
+        )
+
+    @app.get(
+        "/offers/{offer_id}/proposals",
+        response_model=list[OfferEvaluationProposal],
+    )
+    def list_offer_proposals(
+        offer_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> list[OfferEvaluationProposal]:
+        require_offer(repository, offer_id)
+        return repository.list_offer_proposals(offer_id)
+
+    @app.get(
+        "/offers/{offer_id}/proposals/{proposal_id}",
+        response_model=OfferEvaluationProposal,
+    )
+    def get_offer_proposal(
+        offer_id: str,
+        proposal_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> OfferEvaluationProposal:
+        require_offer(repository, offer_id)
+        proposal = repository.get_offer_proposal(offer_id, proposal_id)
+        if proposal is None:
+            raise HTTPException(status_code=404, detail="Offer proposal not found")
+        return proposal
+
+    @app.post(
+        "/offers/{offer_id}/proposals/{proposal_id}/approve",
+        response_model=OfferIntelligenceProfile,
+    )
+    def approve_offer_proposal(
+        offer_id: str,
+        proposal_id: str,
+        data: OfferProposalReview | None = None,
+        repository: Repository = Depends(get_repository),
+    ) -> OfferIntelligenceProfile:
+        require_offer(repository, offer_id)
+        profile = repository.approve_offer_proposal(
+            offer_id, proposal_id, data.review_notes if data else None
+        )
+        if profile is None:
+            raise HTTPException(status_code=409, detail="Offer proposal cannot be approved")
+        return profile
+
+    @app.post(
+        "/offers/{offer_id}/proposals/{proposal_id}/reject",
+        response_model=OfferEvaluationProposal,
+    )
+    def reject_offer_proposal(
+        offer_id: str,
+        proposal_id: str,
+        data: OfferProposalReview | None = None,
+        repository: Repository = Depends(get_repository),
+    ) -> OfferEvaluationProposal:
+        require_offer(repository, offer_id)
+        proposal = repository.reject_offer_proposal(
+            offer_id, proposal_id, data.review_notes if data else None
+        )
+        if proposal is None:
+            raise HTTPException(status_code=404, detail="Offer proposal not found")
+        return proposal
+
+    @app.get(
+        "/offers/{offer_id}/intelligence-profile",
+        response_model=OfferIntelligenceProfile,
+    )
+    def get_offer_intelligence_profile(
+        offer_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> OfferIntelligenceProfile:
+        require_offer(repository, offer_id)
+        profile = repository.get_offer_intelligence_profile(offer_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="Offer intelligence profile not found")
+        return profile
+
     return app
 
 
@@ -386,6 +522,67 @@ def require_evidence_entry(repository: Repository, evidence_entry_id: str) -> Ev
     if evidence_entry is None:
         raise HTTPException(status_code=404, detail="Evidence entry not found")
     return evidence_entry
+
+
+def require_offer(repository: Repository, offer_id: str) -> Offer:
+    offer = repository.get_offer(offer_id)
+    if offer is None:
+        raise HTTPException(status_code=404, detail="Offer not found")
+    return offer
+
+
+def _deterministic_offer_proposal(domain_name: str) -> dict:
+    profile = generate_offer_hypothesis(domain_name)
+    category = profile["offer_category"]
+    return {
+        "primary_category": category,
+        "confidence_score": 0.72,
+        "confidence_label": "MEDIUM",
+        "commercial_hypothesis": profile["commercial_hypothesis"],
+        "predicted_value_range": profile["predicted_value_range"],
+        "target_segments": profile["target_segments"],
+        "buyer_profiles": profile["buyer_profiles"],
+        "signal_profiles": profile["signal_profiles"],
+        "pdm": profile["pdm"],
+        "reasoning": [
+            f"Domain tokens map to {category}.",
+            "Evaluation is deterministic and should be reviewed by a human operator.",
+            "No market data, prospect data, scraping, or company-specific claims were used.",
+        ],
+        "alternative_categories": _alternative_categories(category),
+    }
+
+
+def _normalize_llm_offer_proposal(proposal: dict) -> dict:
+    return {
+        "primary_category": str(proposal["primary_category"]),
+        "confidence_score": float(proposal["confidence_score"]),
+        "confidence_label": str(proposal["confidence_label"]),
+        "commercial_hypothesis": str(proposal["commercial_hypothesis"]),
+        "predicted_value_range": str(proposal["predicted_value_range"]),
+        "target_segments": list(proposal.get("target_segments", [])),
+        "buyer_profiles": list(proposal.get("buyer_profiles", [])),
+        "signal_profiles": list(proposal.get("signal_profiles", [])),
+        "pdm": dict(proposal["pdm"]),
+        "reasoning": list(proposal.get("reasoning", [])),
+        "alternative_categories": list(proposal.get("alternative_categories", [])),
+    }
+
+
+def _normalize_domain(domain_name: str) -> str:
+    return domain_name.strip().replace("https://", "").replace("http://", "").split("/")[0]
+
+
+def _alternative_categories(primary_category: str) -> list[str]:
+    categories = [
+        "Robotics Marketplace",
+        "AI Workflow Product",
+        "Digital Asset Portfolio",
+        "Knowledge Productivity Tool",
+        "Equipment Leasing Platform",
+        "Domain-Led Digital Offer",
+    ]
+    return [category for category in categories if category != primary_category][:3]
 
 
 def load_rules() -> RuleRegistry:

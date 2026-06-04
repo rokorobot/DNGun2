@@ -10,6 +10,7 @@ import {
   Gauge,
   LineChart,
   Plus,
+  Radar,
   RefreshCw,
   Save,
   ShieldCheck,
@@ -21,6 +22,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   addSignal,
   AlphaSignalRule,
+  approveOfferProposal,
   calculateScore,
   CampaignBatch,
   CampaignBatchProspect,
@@ -28,16 +30,21 @@ import {
   CampaignOutcome,
   createCampaignOutcome,
   createEvidenceEntry,
+  createOffer,
   createProspect,
   EvidenceEntry,
+  evaluateOffer,
   getAlphaSignalRules,
   getCampaignIntelligenceMarkdown,
   getCampaignIntelligenceReport,
   getLearningMarkdown,
   getLearningSummary,
+  getOfferIntelligenceProfile,
   listCampaignBatches,
   listCampaignBatchProspects,
   listCampaignOutcomes,
+  listOfferProposals,
+  listOffers,
   listProspectAlphaSignals,
   listProspects,
   listProspectScores,
@@ -49,11 +56,15 @@ import {
   Segment,
   Signal,
   LearningSummary,
+  Offer,
+  OfferEvaluationProposal,
+  OfferIntelligenceProfile,
+  rejectOfferProposal,
   updateCampaignOutcome
 } from "../lib/api";
 
 const segments: Segment[] = ["AI_AUTOMATION", "REVOPS", "SEO", "WEBFLOW"];
-type View = "inbox" | "scoring" | "report" | "evidence" | "outcomes" | "learning";
+type View = "inbox" | "scoring" | "report" | "evidence" | "outcomes" | "learning" | "offers";
 
 export default function Home() {
   const [view, setView] = useState<View>("scoring");
@@ -71,6 +82,11 @@ export default function Home() {
   const [campaignOutcomes, setCampaignOutcomes] = useState<CampaignOutcome[]>([]);
   const [learningSummary, setLearningSummary] = useState<LearningSummary | null>(null);
   const [learningMarkdown, setLearningMarkdown] = useState("");
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [selectedOfferId, setSelectedOfferId] = useState("");
+  const [offerProposals, setOfferProposals] = useState<OfferEvaluationProposal[]>([]);
+  const [selectedOfferProposal, setSelectedOfferProposal] = useState<OfferEvaluationProposal | null>(null);
+  const [offerProfile, setOfferProfile] = useState<OfferIntelligenceProfile | null>(null);
   const [alphaRules, setAlphaRules] = useState<AlphaSignalRule[]>([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -178,12 +194,42 @@ export default function Home() {
     }
   }
 
+  async function refreshOffers(offerId = selectedOfferId) {
+    setLoading(true);
+    setMessage("");
+    try {
+      const nextOffers = await listOffers();
+      setOffers(nextOffers);
+      const activeOfferId = offerId || nextOffers[0]?.id || "";
+      if (!selectedOfferId && activeOfferId) setSelectedOfferId(activeOfferId);
+      if (activeOfferId) {
+        const proposals = await listOfferProposals(activeOfferId);
+        setOfferProposals(proposals);
+        setSelectedOfferProposal(proposals[0] ?? null);
+        try {
+          setOfferProfile(await getOfferIntelligenceProfile(activeOfferId));
+        } catch {
+          setOfferProfile(null);
+        }
+      } else {
+        setOfferProposals([]);
+        setSelectedOfferProposal(null);
+        setOfferProfile(null);
+      }
+    } catch (error) {
+      setMessage(readError(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     void refreshProspects();
     void refreshReport();
     void refreshEvidenceEntries();
     void refreshCampaignWorkbench();
     void refreshLearning();
+    void refreshOffers();
     void getAlphaSignalRules().then(setAlphaRules).catch((error) => setMessage(readError(error)));
   }, []);
 
@@ -198,11 +244,16 @@ export default function Home() {
     if (view === "evidence") void refreshEvidenceEntries();
     if (view === "outcomes") void refreshCampaignWorkbench();
     if (view === "learning") void refreshLearning();
+    if (view === "offers") void refreshOffers();
   }, [view]);
 
   useEffect(() => {
     if (selectedCampaignBatchId) void refreshCampaignWorkbench(selectedCampaignBatchId);
   }, [selectedCampaignBatchId]);
+
+  useEffect(() => {
+    if (selectedOfferId) void refreshOffers(selectedOfferId);
+  }, [selectedOfferId]);
 
   const activeSegment = selectedProspect?.segment ?? "AI_AUTOMATION";
 
@@ -292,10 +343,14 @@ export default function Home() {
               void refreshEvidenceEntries();
               void refreshCampaignWorkbench();
               void refreshLearning();
+              void refreshOffers();
             }}
           />
 
-          <nav className="grid gap-2 md:grid-cols-6">
+          <nav className="grid gap-2 md:grid-cols-7">
+            <NavButton active={view === "offers"} onClick={() => setView("offers")}>
+              <Radar size={15} /> Offer Intelligence
+            </NavButton>
             <NavButton active={view === "inbox"} onClick={() => setView("inbox")}>
               <ClipboardList size={15} /> Prospect Inbox
             </NavButton>
@@ -318,6 +373,21 @@ export default function Home() {
 
           {message ? <div className="border border-[#8f3d32] bg-[#24110f] p-3 text-sm text-[#ffad99]">{message}</div> : null}
 
+          {view === "offers" ? (
+            <OfferIntelligenceWorkspace
+              offers={offers}
+              profile={offerProfile}
+              proposals={offerProposals}
+              selectedOfferId={selectedOfferId}
+              selectedProposal={selectedOfferProposal}
+              onOfferChange={setSelectedOfferId}
+              onProposalChange={setSelectedOfferProposal}
+              onRefresh={async (offerId) => {
+                await refreshOffers(offerId ?? selectedOfferId);
+              }}
+              setMessage={setMessage}
+            />
+          ) : null}
           {view === "inbox" ? <InboxOverview prospects={prospects} /> : null}
           {view === "scoring" ? (
             <ScoringWorkspace
@@ -384,6 +454,265 @@ export default function Home() {
         </aside>
       </section>
     </main>
+  );
+}
+
+function OfferIntelligenceWorkspace({
+  offers,
+  profile,
+  proposals,
+  selectedOfferId,
+  selectedProposal,
+  onOfferChange,
+  onProposalChange,
+  onRefresh,
+  setMessage
+}: {
+  offers: Offer[];
+  profile: OfferIntelligenceProfile | null;
+  proposals: OfferEvaluationProposal[];
+  selectedOfferId: string;
+  selectedProposal: OfferEvaluationProposal | null;
+  onOfferChange: (offerId: string) => void;
+  onProposalChange: (proposal: OfferEvaluationProposal | null) => void;
+  onRefresh: (offerId?: string) => Promise<void>;
+  setMessage: (message: string) => void;
+}) {
+  const [mode, setMode] = useState<"DETERMINISTIC" | "LLM_ASSISTED">("DETERMINISTIC");
+
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const offer = await createOffer({
+        name: String(form.get("name") || ""),
+        description: optionalString(form.get("description")),
+        estimated_value: optionalNumber(form.get("estimated_value"))
+      });
+      event.currentTarget.reset();
+      onOfferChange(offer.id);
+      await onRefresh(offer.id);
+    } catch (error) {
+      setMessage(readError(error));
+    }
+  }
+
+  async function evaluate() {
+    if (!selectedOfferId) return;
+    setMessage("");
+    try {
+      const proposal = await evaluateOffer(selectedOfferId, mode);
+      onProposalChange(proposal);
+      await onRefresh(selectedOfferId);
+    } catch (error) {
+      setMessage(readError(error));
+    }
+  }
+
+  async function approve(reviewNotes?: string) {
+    if (!selectedOfferId || !selectedProposal) return;
+    setMessage("");
+    try {
+      await approveOfferProposal(
+        selectedOfferId,
+        selectedProposal.id,
+        reviewNotes
+      );
+      await onRefresh(selectedOfferId);
+    } catch (error) {
+      setMessage(readError(error));
+    }
+  }
+
+  async function reject(reviewNotes?: string) {
+    if (!selectedOfferId || !selectedProposal) return;
+    setMessage("");
+    try {
+      const proposal = await rejectOfferProposal(
+        selectedOfferId,
+        selectedProposal.id,
+        reviewNotes
+      );
+      onProposalChange(proposal);
+      await onRefresh(selectedOfferId);
+    } catch (error) {
+      setMessage(readError(error));
+    }
+  }
+
+  return (
+    <Panel title="Offer Intelligence" icon={<Radar size={15} />} action="human approval required">
+      <div className="grid gap-4 2xl:grid-cols-[360px_minmax(0,1fr)]">
+        <div className="space-y-4">
+          <form className="space-y-3 border border-[#202c28] bg-[#09100f] p-4" onSubmit={create}>
+            <ConsoleField label="Domain Name" name="name" required />
+            <ConsoleField label="Description" name="description" />
+            <ConsoleField label="Estimated Value" name="estimated_value" />
+            <button className="inline-flex h-9 w-full items-center justify-center gap-2 border border-[#00a85f] bg-[#06351f] px-3 font-mono text-xs uppercase text-[#00e084]" type="submit">
+              <Save size={14} /> Create Offer
+            </button>
+          </form>
+
+          <section className="border border-[#202c28] bg-[#0b0f10] p-4">
+            <label className="block">
+              <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">Offer</span>
+              <select className="h-9 w-full border border-[#293733] bg-[#121516] px-2 font-mono text-xs text-white" onChange={(event) => onOfferChange(event.target.value)} value={selectedOfferId}>
+                <option value="">NO_OFFER</option>
+                {offers.map((offer) => (
+                  <option key={offer.id} value={offer.id}>{offer.name} / {offer.status}</option>
+                ))}
+              </select>
+            </label>
+            <label className="mt-3 block">
+              <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">Evaluation Mode</span>
+              <select className="h-9 w-full border border-[#293733] bg-[#121516] px-2 font-mono text-xs text-white" onChange={(event) => setMode(event.target.value as "DETERMINISTIC" | "LLM_ASSISTED")} value={mode}>
+                <option value="DETERMINISTIC">DETERMINISTIC</option>
+                <option value="LLM_ASSISTED">LLM_ASSISTED</option>
+              </select>
+            </label>
+            <button className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 border border-[#00a9d6] bg-[#062633] px-3 font-mono text-xs uppercase text-[#00c8ff]" onClick={() => void evaluate()} type="button">
+              <Radar size={14} /> Generate Proposal
+            </button>
+          </section>
+
+          <section className="border border-[#202c28] bg-[#0b0f10] p-4">
+            <div className="mb-2 font-mono text-xs font-bold uppercase tracking-[0.14em] text-white">Proposals</div>
+            <div className="space-y-2">
+              {proposals.map((proposal) => (
+                <button className={`w-full border p-3 text-left ${selectedProposal?.id === proposal.id ? "border-[#00d277] bg-[#082316]" : "border-[#293733] bg-[#101516]"}`} key={proposal.id} onClick={() => onProposalChange(proposal)} type="button">
+                  <div className="flex items-center justify-between gap-2 font-mono text-xs">
+                    <span className="text-white">{proposal.primary_category}</span>
+                    <span className="text-[#ffb020]">{proposal.status}</span>
+                  </div>
+                  <div className="mt-2 font-mono text-[10px] text-[#74837c]">{proposal.provider} / {proposal.mode}</div>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <div className="space-y-4">
+          <OfferProposalPreview proposal={selectedProposal} />
+          <OfferReviewPanel onApprove={approve} onReject={reject} proposal={selectedProposal} />
+          <ApprovedOfferProfile profile={profile} />
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function OfferProposalPreview({ proposal }: { proposal: OfferEvaluationProposal | null }) {
+  if (!proposal) {
+    return (
+      <section className="border border-[#202c28] bg-[#0b0f10] p-6 text-center font-mono text-xs uppercase text-[#74837c]">
+        No proposal selected
+      </section>
+    );
+  }
+  const proposed = proposal.proposed_profile_json;
+  return (
+    <section className="border border-[#202c28] bg-[#0b0f10]">
+      <div className="border-b border-[#202c28] px-4 py-3 font-mono text-xs font-bold uppercase tracking-[0.12em] text-white">Proposal Preview</div>
+      <div className="space-y-4 p-4">
+        <div className="grid gap-3 md:grid-cols-3">
+          <InfoLine label="Category" value={proposal.primary_category} />
+          <InfoLine label="Confidence" value={`${proposal.confidence_label} / ${Math.round(proposal.confidence_score * 100)}%`} />
+          <InfoLine label="Value Range" value={proposed.predicted_value_range} />
+        </div>
+        <ReasonBlock title="Commercial Hypothesis" value={proposed.commercial_hypothesis} />
+        <MiniList title="Reasoning" values={proposal.reasoning} />
+        <MiniList title="Alternative Categories" values={proposal.alternative_categories} />
+        <OfferProfileLists proposed={proposed} />
+      </div>
+    </section>
+  );
+}
+
+function OfferProfileLists({ proposed }: { proposed: OfferEvaluationProposal["proposed_profile_json"] }) {
+  return (
+    <div className="grid gap-4 xl:grid-cols-3">
+      <MiniList title="Buyer Profiles" values={proposed.buyer_profiles.map((buyer) => `${buyer.profile_name}: ${buyer.rationale}`)} />
+      <MiniList title="Signal Profiles" values={proposed.signal_profiles.map((signal) => `T${signal.tier} ${signal.signal_name}: ${signal.rationale}`)} />
+      <MiniList title="PDM" values={[`${proposed.pdm.code} / ${proposed.pdm.name}`, proposed.pdm.summary, ...proposed.pdm.target_segments]} />
+    </div>
+  );
+}
+
+function OfferReviewPanel({
+  onApprove,
+  onReject,
+  proposal
+}: {
+  onApprove: (reviewNotes?: string) => void;
+  onReject: (reviewNotes?: string) => void;
+  proposal: OfferEvaluationProposal | null;
+}) {
+  const [reviewNotes, setReviewNotes] = useState("");
+  return (
+    <section className="border border-[#202c28] bg-[#09100f] p-4">
+      <label className="block">
+        <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">Review Notes</span>
+        <input className="h-9 w-full border border-[#293733] bg-[#121516] px-2 text-sm text-white" onChange={(event) => setReviewNotes(event.target.value)} value={reviewNotes} />
+      </label>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <button className="inline-flex h-9 items-center justify-center gap-2 border border-[#00a85f] bg-[#06351f] px-3 font-mono text-xs uppercase text-[#00e084] disabled:opacity-40" disabled={!proposal || proposal.status !== "PENDING_REVIEW"} onClick={() => void onApprove(reviewNotes || undefined)} type="button">
+          <ShieldCheck size={14} /> Approve
+        </button>
+        <button className="inline-flex h-9 items-center justify-center gap-2 border border-[#8f3d32] bg-[#24110f] px-3 font-mono text-xs uppercase text-[#ffad99] disabled:opacity-40" disabled={!proposal || proposal.status !== "PENDING_REVIEW"} onClick={() => void onReject(reviewNotes || undefined)} type="button">
+          Reject
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ApprovedOfferProfile({ profile }: { profile: OfferIntelligenceProfile | null }) {
+  if (!profile) {
+    return (
+      <section className="border border-[#202c28] bg-[#0b0f10] p-6 text-center font-mono text-xs uppercase text-[#74837c]">
+        No approved offer profile
+      </section>
+    );
+  }
+  return (
+    <section className="border border-[#00a85f] bg-[#071f14]">
+      <div className="border-b border-[#00a85f] px-4 py-3 font-mono text-xs font-bold uppercase tracking-[0.12em] text-white">Approved Offer Profile</div>
+      <div className="space-y-4 p-4">
+        <div className="grid gap-3 md:grid-cols-3">
+          <InfoLine label="Offer" value={profile.offer.name} />
+          <InfoLine label="Category" value={profile.profile.offer_category} />
+          <InfoLine label="Value" value={profile.profile.predicted_value_range} />
+        </div>
+        <ReasonBlock title="Commercial Hypothesis" value={profile.profile.commercial_hypothesis} />
+        <OfferProfileLists proposed={{
+          primary_category: profile.profile.offer_category,
+          confidence_score: 1,
+          confidence_label: "APPROVED",
+          commercial_hypothesis: profile.profile.commercial_hypothesis,
+          predicted_value_range: profile.profile.predicted_value_range,
+          target_segments: profile.profile.target_segments,
+          buyer_profiles: profile.buyerProfiles,
+          signal_profiles: profile.signalProfiles,
+          pdm: profile.pdm,
+          reasoning: [],
+          alternative_categories: []
+        }} />
+      </div>
+    </section>
+  );
+}
+
+function MiniList({ title, values }: { title: string; values: string[] }) {
+  return (
+    <section className="border border-[#293733] bg-[#101516] p-3">
+      <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.12em] text-[#00c8ff]">{title}</div>
+      <div className="space-y-2">
+        {values.map((value) => (
+          <div className="text-sm text-[#dce8e1]" key={value}>{value}</div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1363,6 +1692,11 @@ function Td({ children, mono = false }: { children: React.ReactNode; mono?: bool
 function optionalString(value: FormDataEntryValue | null) {
   const text = String(value || "").trim();
   return text ? text : undefined;
+}
+
+function optionalNumber(value: FormDataEntryValue | null) {
+  const text = String(value || "").trim();
+  return text ? Number(text) : undefined;
 }
 
 function readError(error: unknown) {

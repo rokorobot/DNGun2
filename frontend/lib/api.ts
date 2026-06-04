@@ -176,6 +176,86 @@ export type LearningSummary = {
   recommendedRuleChanges: string[];
 };
 
+export type Offer = {
+  id: string;
+  name: string;
+  offer_type: "DOMAIN_NAME";
+  description?: string | null;
+  estimated_value?: number | null;
+  status: "DRAFT" | "PROPOSED" | "PROFILED" | "VALIDATING" | "ARCHIVED";
+  created_at: string;
+};
+
+export type OfferEvaluationProposal = {
+  id: string;
+  offer_id: string;
+  provider: string;
+  model?: string | null;
+  mode: "DETERMINISTIC" | "LLM_ASSISTED";
+  raw_domain: string;
+  normalized_domain: string;
+  primary_category: string;
+  confidence_score: number;
+  confidence_label: string;
+  reasoning: string[];
+  alternative_categories: string[];
+  proposed_profile_json: {
+    primary_category: string;
+    confidence_score: number;
+    confidence_label: string;
+    commercial_hypothesis: string;
+    predicted_value_range: string;
+    target_segments: string[];
+    buyer_profiles: Array<{ profile_name: string; rationale: string; priority: number }>;
+    signal_profiles: Array<{ signal_name: string; tier: 1 | 2 | 3; rationale: string }>;
+    pdm: { code: string; name: string; summary: string; target_segments: string[] };
+    reasoning: string[];
+    alternative_categories: string[];
+  };
+  status: "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "SUPERSEDED";
+  created_at: string;
+  reviewed_at?: string | null;
+  review_notes?: string | null;
+};
+
+export type OfferIntelligenceProfile = {
+  offer: Offer;
+  profile: {
+    id: string;
+    offer_id: string;
+    offer_category: string;
+    commercial_hypothesis: string;
+    predicted_value_range: string;
+    target_segments: string[];
+    created_at: string;
+  };
+  buyerProfiles: Array<{
+    id: string;
+    offer_id: string;
+    profile_name: string;
+    rationale: string;
+    priority: number;
+    created_at: string;
+  }>;
+  signalProfiles: Array<{
+    id: string;
+    offer_id: string;
+    signal_name: string;
+    tier: 1 | 2 | 3;
+    rationale: string;
+    created_at: string;
+  }>;
+  pdm: {
+    id: string;
+    offer_id: string;
+    code: string;
+    name: string;
+    summary: string;
+    target_segments: string[];
+    created_at: string;
+  };
+};
+
 export type AlphaSignalRule = {
   code: string;
   name: string;
@@ -311,6 +391,54 @@ export function updateCampaignOutcome(campaignOutcomeId: string, data: CampaignO
 
 export function getLearningSummary() {
   return request<LearningSummary>("/learning/summary");
+}
+
+export function createOffer(data: {
+  name: string;
+  offer_type?: "DOMAIN_NAME";
+  description?: string;
+  estimated_value?: number;
+}) {
+  return request<Offer>("/offers", {
+    method: "POST",
+    body: JSON.stringify({
+      offer_type: "DOMAIN_NAME",
+      ...data
+    })
+  });
+}
+
+export function listOffers() {
+  return request<Offer[]>("/offers");
+}
+
+export function evaluateOffer(offerId: string, mode: "DETERMINISTIC" | "LLM_ASSISTED") {
+  return request<OfferEvaluationProposal>(`/offers/${offerId}/evaluate`, {
+    method: "POST",
+    body: JSON.stringify({ mode })
+  });
+}
+
+export function listOfferProposals(offerId: string) {
+  return request<OfferEvaluationProposal[]>(`/offers/${offerId}/proposals`);
+}
+
+export function approveOfferProposal(offerId: string, proposalId: string, review_notes?: string) {
+  return request<OfferIntelligenceProfile>(`/offers/${offerId}/proposals/${proposalId}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ review_notes })
+  });
+}
+
+export function rejectOfferProposal(offerId: string, proposalId: string, review_notes?: string) {
+  return request<OfferEvaluationProposal>(`/offers/${offerId}/proposals/${proposalId}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ review_notes })
+  });
+}
+
+export function getOfferIntelligenceProfile(offerId: string) {
+  return request<OfferIntelligenceProfile>(`/offers/${offerId}/intelligence-profile`);
 }
 
 export async function getLearningMarkdown() {

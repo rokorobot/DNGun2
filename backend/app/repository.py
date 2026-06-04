@@ -19,6 +19,16 @@ from .schemas import (
     ConfidenceUpdateCreate,
     EvidenceEntry,
     EvidenceEntryCreate,
+    Offer,
+    OfferBuyerProfile,
+    OfferCreate,
+    OfferEvaluationProposal,
+    OfferIntelligenceProfile,
+    OfferPdm,
+    OfferProfile,
+    OfferProposalStatus,
+    OfferSignalProfile,
+    OfferStatus,
     Prospect,
     ProspectAlphaSignal,
     ProspectAlphaSignalCreate,
@@ -348,6 +358,222 @@ class Repository:
         ).all()
         return [ConfidenceUpdate.model_validate(row) for row in rows]
 
+    def create_offer(self, data: OfferCreate) -> Offer:
+        model = models.OfferModel(
+            id=prefixed_id("O"),
+            created_at=utc_now_iso(),
+            **data.model_dump(mode="json"),
+        )
+        self.session.add(model)
+        self.session.commit()
+        self.session.refresh(model)
+        return Offer.model_validate(model)
+
+    def list_offers(self) -> list[Offer]:
+        rows = self.session.scalars(
+            select(models.OfferModel).order_by(models.OfferModel.created_at.desc())
+        ).all()
+        return [Offer.model_validate(row) for row in rows]
+
+    def get_offer(self, offer_id: str) -> Offer | None:
+        model = self.session.get(models.OfferModel, offer_id)
+        return Offer.model_validate(model) if model else None
+
+    def update_offer_status(self, offer_id: str, status: OfferStatus) -> Offer | None:
+        model = self.session.get(models.OfferModel, offer_id)
+        if model is None:
+            return None
+        model.status = status.value
+        self.session.commit()
+        self.session.refresh(model)
+        return Offer.model_validate(model)
+
+    def create_offer_evaluation_proposal(
+        self,
+        offer_id: str,
+        provider: str,
+        model_name: str | None,
+        mode: str,
+        raw_domain: str,
+        normalized_domain: str,
+        proposal: dict,
+    ) -> OfferEvaluationProposal:
+        model = models.OfferEvaluationProposalModel(
+            id=prefixed_id("OEP"),
+            offer_id=offer_id,
+            provider=provider,
+            model=model_name,
+            mode=mode,
+            raw_domain=raw_domain,
+            normalized_domain=normalized_domain,
+            primary_category=proposal["primary_category"],
+            confidence_score=proposal["confidence_score"],
+            confidence_label=proposal["confidence_label"],
+            reasoning=json.dumps(proposal.get("reasoning", [])),
+            alternative_categories=json.dumps(proposal.get("alternative_categories", [])),
+            proposed_profile_json=json.dumps(proposal),
+            status=OfferProposalStatus.PENDING_REVIEW.value,
+            created_at=utc_now_iso(),
+        )
+        self.session.add(model)
+        offer_model = self.session.get(models.OfferModel, offer_id)
+        if offer_model is not None:
+            offer_model.status = OfferStatus.PROPOSED.value
+        self.session.commit()
+        self.session.refresh(model)
+        return self._offer_proposal_from_model(model)
+
+    def list_offer_proposals(self, offer_id: str) -> list[OfferEvaluationProposal]:
+        rows = self.session.scalars(
+            select(models.OfferEvaluationProposalModel)
+            .where(models.OfferEvaluationProposalModel.offer_id == offer_id)
+            .order_by(models.OfferEvaluationProposalModel.created_at.desc())
+        ).all()
+        return [self._offer_proposal_from_model(row) for row in rows]
+
+    def get_offer_proposal(
+        self, offer_id: str, proposal_id: str
+    ) -> OfferEvaluationProposal | None:
+        model = self.session.scalar(
+            select(models.OfferEvaluationProposalModel).where(
+                models.OfferEvaluationProposalModel.offer_id == offer_id,
+                models.OfferEvaluationProposalModel.id == proposal_id,
+            )
+        )
+        return self._offer_proposal_from_model(model) if model else None
+
+    def reject_offer_proposal(
+        self, offer_id: str, proposal_id: str, review_notes: str | None
+    ) -> OfferEvaluationProposal | None:
+        model = self.session.scalar(
+            select(models.OfferEvaluationProposalModel).where(
+                models.OfferEvaluationProposalModel.offer_id == offer_id,
+                models.OfferEvaluationProposalModel.id == proposal_id,
+            )
+        )
+        if model is None:
+            return None
+        model.status = OfferProposalStatus.REJECTED.value
+        model.reviewed_at = utc_now_iso()
+        model.review_notes = review_notes
+        self.session.commit()
+        self.session.refresh(model)
+        return self._offer_proposal_from_model(model)
+
+    def approve_offer_proposal(
+        self, offer_id: str, proposal_id: str, review_notes: str | None
+    ) -> OfferIntelligenceProfile | None:
+        proposal = self.session.scalar(
+            select(models.OfferEvaluationProposalModel).where(
+                models.OfferEvaluationProposalModel.offer_id == offer_id,
+                models.OfferEvaluationProposalModel.id == proposal_id,
+            )
+        )
+        if proposal is None or proposal.status != OfferProposalStatus.PENDING_REVIEW.value:
+            return None
+
+        self._clear_offer_profile_rows(offer_id)
+        data = json.loads(proposal.proposed_profile_json)
+        profile = models.OfferProfileModel(
+            id=prefixed_id("OP"),
+            offer_id=offer_id,
+            offer_category=data["primary_category"],
+            commercial_hypothesis=data["commercial_hypothesis"],
+            predicted_value_range=data["predicted_value_range"],
+            target_segments=json.dumps(data.get("target_segments", [])),
+            created_at=utc_now_iso(),
+        )
+        self.session.add(profile)
+        for buyer in data.get("buyer_profiles", []):
+            self.session.add(
+                models.OfferBuyerProfileModel(
+                    id=prefixed_id("OBP"),
+                    offer_id=offer_id,
+                    created_at=utc_now_iso(),
+                    **buyer,
+                )
+            )
+        for signal in data.get("signal_profiles", []):
+            self.session.add(
+                models.OfferSignalProfileModel(
+                    id=prefixed_id("OSP"),
+                    offer_id=offer_id,
+                    created_at=utc_now_iso(),
+                    **signal,
+                )
+            )
+        pdm = data["pdm"]
+        self.session.add(
+            models.OfferPdmModel(
+                id=prefixed_id("OPDM"),
+                offer_id=offer_id,
+                code=pdm["code"],
+                name=pdm["name"],
+                summary=pdm["summary"],
+                target_segments=json.dumps(pdm.get("target_segments", [])),
+                created_at=utc_now_iso(),
+            )
+        )
+        proposal.status = OfferProposalStatus.APPROVED.value
+        proposal.reviewed_at = utc_now_iso()
+        proposal.review_notes = review_notes
+        for old_proposal in self.session.scalars(
+            select(models.OfferEvaluationProposalModel).where(
+                models.OfferEvaluationProposalModel.offer_id == offer_id,
+                models.OfferEvaluationProposalModel.id != proposal_id,
+                models.OfferEvaluationProposalModel.status == OfferProposalStatus.APPROVED.value,
+            )
+        ).all():
+            old_proposal.status = OfferProposalStatus.SUPERSEDED.value
+        offer_model = self.session.get(models.OfferModel, offer_id)
+        if offer_model is not None:
+            offer_model.status = OfferStatus.PROFILED.value
+        self.session.commit()
+        return self.get_offer_intelligence_profile(offer_id)
+
+    def get_offer_intelligence_profile(
+        self, offer_id: str
+    ) -> OfferIntelligenceProfile | None:
+        offer = self.session.get(models.OfferModel, offer_id)
+        profile = self.session.scalar(
+            select(models.OfferProfileModel).where(models.OfferProfileModel.offer_id == offer_id)
+        )
+        pdm = self.session.scalar(
+            select(models.OfferPdmModel).where(models.OfferPdmModel.offer_id == offer_id)
+        )
+        if offer is None or profile is None or pdm is None:
+            return None
+        buyers = self.session.scalars(
+            select(models.OfferBuyerProfileModel)
+            .where(models.OfferBuyerProfileModel.offer_id == offer_id)
+            .order_by(models.OfferBuyerProfileModel.priority.asc())
+        ).all()
+        signals = self.session.scalars(
+            select(models.OfferSignalProfileModel)
+            .where(models.OfferSignalProfileModel.offer_id == offer_id)
+            .order_by(models.OfferSignalProfileModel.tier.asc())
+        ).all()
+        return OfferIntelligenceProfile(
+            offer=Offer.model_validate(offer),
+            profile=self._offer_profile_from_model(profile),
+            buyerProfiles=[OfferBuyerProfile.model_validate(row) for row in buyers],
+            signalProfiles=[OfferSignalProfile.model_validate(row) for row in signals],
+            pdm=self._offer_pdm_from_model(pdm),
+        )
+
+    def _clear_offer_profile_rows(self, offer_id: str) -> None:
+        for model_class in [
+            models.OfferProfileModel,
+            models.OfferBuyerProfileModel,
+            models.OfferSignalProfileModel,
+            models.OfferPdmModel,
+        ]:
+            rows = self.session.scalars(
+                select(model_class).where(model_class.offer_id == offer_id)
+            ).all()
+            for row in rows:
+                self.session.delete(row)
+
     @staticmethod
     def _alpha_signal_from_model(model: models.AlphaSignalModel) -> AlphaSignal:
         return AlphaSignal(
@@ -400,4 +626,52 @@ class Repository:
             decision=model.decision,
             explanation=explanations,
             calculated_at=model.calculated_at,
+        )
+
+    @staticmethod
+    def _offer_profile_from_model(model: models.OfferProfileModel) -> OfferProfile:
+        return OfferProfile(
+            id=model.id,
+            offer_id=model.offer_id,
+            offer_category=model.offer_category,
+            commercial_hypothesis=model.commercial_hypothesis,
+            predicted_value_range=model.predicted_value_range,
+            target_segments=json.loads(model.target_segments or "[]"),
+            created_at=model.created_at,
+        )
+
+    @staticmethod
+    def _offer_pdm_from_model(model: models.OfferPdmModel) -> OfferPdm:
+        return OfferPdm(
+            id=model.id,
+            offer_id=model.offer_id,
+            code=model.code,
+            name=model.name,
+            summary=model.summary,
+            target_segments=json.loads(model.target_segments or "[]"),
+            created_at=model.created_at,
+        )
+
+    @staticmethod
+    def _offer_proposal_from_model(
+        model: models.OfferEvaluationProposalModel,
+    ) -> OfferEvaluationProposal:
+        return OfferEvaluationProposal(
+            id=model.id,
+            offer_id=model.offer_id,
+            provider=model.provider,
+            model=model.model,
+            mode=model.mode,
+            raw_domain=model.raw_domain,
+            normalized_domain=model.normalized_domain,
+            primary_category=model.primary_category,
+            confidence_score=model.confidence_score,
+            confidence_label=model.confidence_label,
+            reasoning=json.loads(model.reasoning or "[]"),
+            alternative_categories=json.loads(model.alternative_categories or "[]"),
+            proposed_profile_json=json.loads(model.proposed_profile_json),
+            status=model.status,
+            created_at=model.created_at,
+            reviewed_at=model.reviewed_at,
+            review_notes=model.review_notes,
         )

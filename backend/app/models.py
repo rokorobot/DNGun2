@@ -220,3 +220,116 @@ class ConfidenceUpdateModel(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
     evidence_entry: Mapped[EvidenceEntryModel | None] = relationship()
+
+
+class OfferModel(Base):
+    __tablename__ = "offers"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    offer_type: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    estimated_value: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    profile: Mapped[OfferProfileModel | None] = relationship(
+        back_populates="offer", cascade="all, delete-orphan"
+    )
+    buyer_profiles: Mapped[list[OfferBuyerProfileModel]] = relationship(
+        back_populates="offer", cascade="all, delete-orphan"
+    )
+    signal_profiles: Mapped[list[OfferSignalProfileModel]] = relationship(
+        back_populates="offer", cascade="all, delete-orphan"
+    )
+    pdm: Mapped[OfferPdmModel | None] = relationship(
+        back_populates="offer", cascade="all, delete-orphan"
+    )
+
+
+class OfferProfileModel(Base):
+    __tablename__ = "offer_profiles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    offer_id: Mapped[str] = mapped_column(
+        ForeignKey("offers.id", ondelete="CASCADE"), nullable=False
+    )
+    offer_category: Mapped[str] = mapped_column(String, nullable=False)
+    commercial_hypothesis: Mapped[str] = mapped_column(Text, nullable=False)
+    predicted_value_range: Mapped[str] = mapped_column(String, nullable=False)
+    target_segments: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    offer: Mapped[OfferModel] = relationship(back_populates="profile")
+
+
+class OfferBuyerProfileModel(Base):
+    __tablename__ = "offer_buyer_profiles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    offer_id: Mapped[str] = mapped_column(
+        ForeignKey("offers.id", ondelete="CASCADE"), nullable=False
+    )
+    profile_name: Mapped[str] = mapped_column(String, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    offer: Mapped[OfferModel] = relationship(back_populates="buyer_profiles")
+
+
+class OfferSignalProfileModel(Base):
+    __tablename__ = "offer_signal_profiles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    offer_id: Mapped[str] = mapped_column(
+        ForeignKey("offers.id", ondelete="CASCADE"), nullable=False
+    )
+    signal_name: Mapped[str] = mapped_column(String, nullable=False)
+    tier: Mapped[int] = mapped_column(Integer, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    offer: Mapped[OfferModel] = relationship(back_populates="signal_profiles")
+
+
+class OfferPdmModel(Base):
+    __tablename__ = "offer_pdms"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    offer_id: Mapped[str] = mapped_column(
+        ForeignKey("offers.id", ondelete="CASCADE"), nullable=False
+    )
+    code: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    target_segments: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    offer: Mapped[OfferModel] = relationship(back_populates="pdm")
+
+
+class OfferEvaluationProposalModel(Base):
+    __tablename__ = "offer_evaluation_proposals"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    offer_id: Mapped[str] = mapped_column(
+        ForeignKey("offers.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    model: Mapped[str | None] = mapped_column(String)
+    mode: Mapped[str] = mapped_column(String, nullable=False)
+    raw_domain: Mapped[str] = mapped_column(String, nullable=False)
+    normalized_domain: Mapped[str] = mapped_column(String, nullable=False)
+    primary_category: Mapped[str] = mapped_column(String, nullable=False)
+    confidence_score: Mapped[float] = mapped_column(Float, nullable=False)
+    confidence_label: Mapped[str] = mapped_column(String, nullable=False)
+    reasoning: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    alternative_categories: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    proposed_profile_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    reviewed_at: Mapped[str | None] = mapped_column(String)
+    review_notes: Mapped[str | None] = mapped_column(Text)
+
+    offer: Mapped[OfferModel] = relationship()
