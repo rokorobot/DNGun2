@@ -32,3 +32,16 @@ pytest backend/tests
 The default SQLite database is created at `data/dngun.sqlite3`.
 
 No email automation, scraping, auth, billing, or CRM features are included.
+
+Seed MVP 0.1 sample data:
+
+```powershell
+python backend\scripts\seed_mvp0.py
+```
+
+Campaign intelligence report:
+
+```text
+GET /reports/campaign-intelligence
+GET /reports/campaign-intelligence.md
+```

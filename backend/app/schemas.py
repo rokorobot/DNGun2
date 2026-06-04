@@ -204,3 +204,31 @@ class ConfidenceUpdateCreate(BaseModel):
 class ConfidenceUpdate(ApiModel, ConfidenceUpdateCreate):
     id: str
     created_at: str
+
+
+class RateSummary(BaseModel):
+    count: int
+    contacted_count: int
+    replied_count: int
+    call_booked_count: int
+    proposal_requested_count: int
+    paid_pilot_count: int
+    reply_rate: float
+    call_booked_rate: float
+    proposal_requested_rate: float
+    paid_pilot_rate: float
+
+
+class CampaignIntelligenceReport(BaseModel):
+    total_prospects: int
+    contacted_count: int
+    reply_rate: float
+    call_booked_rate: float
+    proposal_requested_rate: float
+    paid_pilot_rate: float
+    performance_by_score_band: dict[str, RateSummary]
+    performance_by_alpha_signal: dict[str, RateSummary]
+    evidence_entries_created: int
+    confidence_before: float | None = None
+    confidence_after: float | None = None
+    confidence_delta: float | None = None

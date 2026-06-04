@@ -3,11 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from . import models as _models  # noqa: F401 - registers SQLAlchemy models.
 from .database import create_session_factory
 from .repository import Repository, RepositoryConflictError
+from .reporting import (
+    build_campaign_intelligence_report,
+    render_campaign_intelligence_markdown,
+)
 from .schemas import (
     AlphaSignal,
     AlphaSignalCreate,
@@ -16,6 +21,7 @@ from .schemas import (
     CampaignBatchProspect,
     CampaignOutcome,
     CampaignOutcomeCreate,
+    CampaignIntelligenceReport,
     ConfidenceUpdate,
     ConfidenceUpdateCreate,
     EvidenceEntry,
@@ -251,6 +257,19 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         repository: Repository = Depends(get_repository),
     ) -> list[ConfidenceUpdate]:
         return repository.list_confidence_updates()
+
+    @app.get("/reports/campaign-intelligence", response_model=CampaignIntelligenceReport)
+    def get_campaign_intelligence_report(
+        session: Session = Depends(get_session),
+    ) -> CampaignIntelligenceReport:
+        return build_campaign_intelligence_report(session)
+
+    @app.get("/reports/campaign-intelligence.md", response_class=PlainTextResponse)
+    def export_campaign_intelligence_report(
+        session: Session = Depends(get_session),
+    ) -> str:
+        report = build_campaign_intelligence_report(session)
+        return render_campaign_intelligence_markdown(report)
 
     return app
 
