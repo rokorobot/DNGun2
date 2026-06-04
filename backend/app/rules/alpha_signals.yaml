@@ -1,0 +1,25 @@
+alpha_signals:
+  - code: AS-001
+    name: Growth Pressure
+    description: Founder growth pressure paired with new service activity.
+    required_signals:
+      - Founder discusses growth
+      - New service launch
+    bonus_score: 15
+    validation_status: HYPOTHESIS
+  - code: AS-004
+    name: Referral Dependency
+    description: Strong proof exists, but acquisition appears referral-dependent.
+    required_signals:
+      - Founder mentions referrals
+      - Strong case studies
+    bonus_score: 10
+    validation_status: HYPOTHESIS
+  - code: AS-010
+    name: Founder ROI Awareness
+    description: Founder uses pipeline, CAC, conversion, or ROI language.
+    required_signals:
+      - Founder discusses CAC
+      - Founder discusses pipeline
+    bonus_score: 15
+    validation_status: HYPOTHESIS

@@ -6,17 +6,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import models
+from .rules import RuleRegistry
 from .schemas import CampaignIntelligenceReport, RateSummary
 
 
-SCORE_BANDS = {
-    "CONTACT_NOW": lambda score: score >= 80,
-    "SECONDARY": lambda score: 60 <= score < 80,
-    "IGNORE": lambda score: score < 60,
-}
-
-
-def build_campaign_intelligence_report(session: Session) -> CampaignIntelligenceReport:
+def build_campaign_intelligence_report(
+    session: Session, rules: RuleRegistry | None = None
+) -> CampaignIntelligenceReport:
+    rules = rules or RuleRegistry()
     total_prospects = session.scalar(select(func.count(models.ProspectModel.id))) or 0
     outcomes = session.scalars(select(models.CampaignOutcomeModel)).all()
     latest_scores = _latest_scores_by_prospect(session)
@@ -24,13 +21,13 @@ def build_campaign_intelligence_report(session: Session) -> CampaignIntelligence
 
     overall = _rate_summary(outcomes)
     score_band_outcomes: dict[str, list[models.CampaignOutcomeModel]] = {
-        band: [] for band in SCORE_BANDS
+        band["code"]: [] for band in rules.score_bands()
     }
     for outcome in outcomes:
         score = latest_scores.get(outcome.prospect_id)
         if score is None:
             continue
-        band = _score_band(score.final_score)
+        band = _score_band(score.final_score, rules)
         score_band_outcomes[band].append(outcome)
 
     alpha_signal_outcomes: dict[str, list[models.CampaignOutcomeModel]] = defaultdict(list)
@@ -150,10 +147,15 @@ def _alpha_codes_by_prospect(session: Session) -> dict[str, list[str]]:
     return result
 
 
-def _score_band(score: int) -> str:
-    for band, predicate in SCORE_BANDS.items():
-        if predicate(score):
-            return band
+def _score_band(score: int, rules: RuleRegistry) -> str:
+    for band in rules.score_bands():
+        min_score = band.get("min_score")
+        max_score = band.get("max_score")
+        if min_score is not None and score < min_score:
+            continue
+        if max_score is not None and score > max_score:
+            continue
+        return band["code"]
     return "UNKNOWN"
 
 

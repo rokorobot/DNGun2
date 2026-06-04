@@ -1,0 +1,17 @@
+disqualifiers:
+  - code: guaranteed_outcomes_required
+    name: Guaranteed outcomes required
+    signal_type: Guaranteed outcomes required
+    reason: Prospect wants guaranteed meetings or guaranteed outcomes.
+  - code: low_client_value
+    name: Low client value
+    signal_type: Low client value
+    reason: Expected client value is too low for pilot economics.
+  - code: no_founder_involvement
+    name: No founder involvement
+    signal_type: No founder involvement
+    reason: No founder or clear decision-maker involvement.
+  - code: vague_offer
+    name: Vague offer
+    signal_type: Vague offer
+    reason: Offer is too vague to target a concrete ICP.

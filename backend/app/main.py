@@ -13,6 +13,7 @@ from .reporting import (
     build_campaign_intelligence_report,
     render_campaign_intelligence_markdown,
 )
+from .rules import RuleRegistry, RuleRegistryError
 from .schemas import (
     AlphaSignal,
     AlphaSignalCreate,
@@ -55,6 +56,26 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/rules")
+    def get_rules() -> dict:
+        return load_rules().all_rules()
+
+    @app.get("/rules/score-bands")
+    def get_score_bands() -> list[dict]:
+        return load_rules().score_bands()
+
+    @app.get("/rules/alpha-signals")
+    def get_alpha_signal_rules() -> list[dict]:
+        return load_rules().alpha_signals()
+
+    @app.get("/rules/signal-taxonomy")
+    def get_signal_taxonomy() -> list[dict]:
+        return load_rules().signal_taxonomy()
+
+    @app.get("/rules/disqualifiers")
+    def get_disqualifiers() -> list[dict]:
+        return load_rules().disqualifiers()
 
     @app.post("/prospects", response_model=Prospect, status_code=201)
     def create_prospect(
@@ -300,6 +321,13 @@ def require_evidence_entry(repository: Repository, evidence_entry_id: str) -> Ev
     if evidence_entry is None:
         raise HTTPException(status_code=404, detail="Evidence entry not found")
     return evidence_entry
+
+
+def load_rules() -> RuleRegistry:
+    try:
+        return RuleRegistry()
+    except RuleRegistryError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 app = create_app()

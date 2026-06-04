@@ -45,3 +45,22 @@ Campaign intelligence report:
 GET /reports/campaign-intelligence
 GET /reports/campaign-intelligence.md
 ```
+
+Rule registry files:
+
+```text
+backend/app/rules/score_bands.yaml
+backend/app/rules/signal_taxonomy.yaml
+backend/app/rules/alpha_signals.yaml
+backend/app/rules/disqualifiers.yaml
+```
+
+Rule registry endpoints:
+
+```text
+GET /rules
+GET /rules/score-bands
+GET /rules/alpha-signals
+GET /rules/signal-taxonomy
+GET /rules/disqualifiers
+```

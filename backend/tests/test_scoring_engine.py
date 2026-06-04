@@ -102,3 +102,34 @@ def test_score_thresholds():
     assert engine._decision_for(60) == "SECONDARY"
     assert engine._decision_for(79) == "SECONDARY"
     assert engine._decision_for(80) == "CONTACT_NOW"
+
+
+def test_disqualifier_rule_overrides_score_decision():
+    signals = [
+        Signal(
+            id=f"S-{index}",
+            prospect_id="P-1",
+            signal_type=signal_type,
+            tier=tier,
+            score=5,
+            observed_at="2026-06-04T00:00:00+00:00",
+            created_at="2026-06-04T00:00:00+00:00",
+        )
+        for index, (signal_type, tier) in enumerate(
+            [
+                ("Founder discussing growth", 1),
+                ("New service launch", 1),
+                ("Hiring SDR", 1),
+                ("Recent case study", 1),
+                ("Strong case studies", 2),
+                ("Founder contact path visible", 3),
+                ("Guaranteed outcomes required", 3),
+            ]
+        )
+    ]
+
+    score = ScoringEngine().calculate("P-1", signals)
+
+    assert score.final_score >= 80
+    assert score.decision == "DISQUALIFY"
+    assert score.explanation[-1].source_type == "DISQUALIFIER"

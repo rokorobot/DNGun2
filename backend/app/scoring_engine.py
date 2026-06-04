@@ -1,17 +1,14 @@
 from __future__ import annotations
 
+from .rules import RuleRegistry
 from .schemas import AlphaSignal, ProspectScore, ScoreDecision, ScoreExplanation, Signal
-
-
-TIER_MULTIPLIERS = {
-    1: 3,
-    2: 2,
-    3: 1,
-}
 
 
 class ScoringEngine:
     """MVP 0 scoring engine with separate base and Alpha Signal contributions."""
+
+    def __init__(self, rules: RuleRegistry | None = None):
+        self.rules = rules or RuleRegistry()
 
     def calculate(
         self,
@@ -20,12 +17,13 @@ class ScoringEngine:
         alpha_signals: list[AlphaSignal] | None = None,
     ) -> ProspectScore:
         alpha_signals = alpha_signals or []
+        tier_multipliers = self.rules.tier_multipliers()
         tier_totals = {1: 0, 2: 0, 3: 0}
         explanation: list[ScoreExplanation] = []
 
         for signal in signals:
             tier_totals[signal.tier] += signal.score
-            impact = signal.score * TIER_MULTIPLIERS[signal.tier]
+            impact = signal.score * tier_multipliers[signal.tier]
             explanation.append(
                 ScoreExplanation(
                     source_type="SIGNAL",
@@ -39,7 +37,7 @@ class ScoringEngine:
 
         base_score = sum(
             tier_totals[tier] * multiplier
-            for tier, multiplier in TIER_MULTIPLIERS.items()
+            for tier, multiplier in tier_multipliers.items()
         )
         alpha_bonus = sum(alpha_signal.bonus_score for alpha_signal in alpha_signals)
         for alpha_signal in alpha_signals:
@@ -54,6 +52,21 @@ class ScoringEngine:
             )
 
         final_score = base_score + alpha_bonus
+        disqualifier = self.rules.matching_disqualifier(
+            [signal.signal_type for signal in signals]
+        )
+        decision = self._decision_for(final_score)
+        if disqualifier:
+            decision = ScoreDecision.DISQUALIFY
+            explanation.append(
+                ScoreExplanation(
+                    source_type="DISQUALIFIER",
+                    source_code=disqualifier["code"],
+                    label=disqualifier["name"],
+                    impact=0,
+                    notes=disqualifier["reason"],
+                )
+            )
 
         return ProspectScore(
             prospect_id=prospect_id,
@@ -64,14 +77,9 @@ class ScoringEngine:
             alpha_matches=[alpha_signal.code for alpha_signal in alpha_signals],
             alpha_bonus=alpha_bonus,
             final_score=final_score,
-            decision=self._decision_for(final_score),
+            decision=decision,
             explanation=explanation,
         )
 
-    @staticmethod
-    def _decision_for(final_score: int) -> ScoreDecision:
-        if final_score >= 80:
-            return ScoreDecision.CONTACT_NOW
-        if final_score >= 60:
-            return ScoreDecision.SECONDARY
-        return ScoreDecision.IGNORE
+    def _decision_for(self, final_score: int) -> ScoreDecision:
+        return ScoreDecision(self.rules.decision_for_score(final_score))

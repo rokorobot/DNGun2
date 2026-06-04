@@ -1,0 +1,18 @@
+score_bands:
+  - code: CONTACT_NOW
+    label: Contact Immediately
+    decision: CONTACT_NOW
+    min_score: 80
+  - code: SECONDARY
+    label: Secondary Queue
+    decision: SECONDARY
+    min_score: 60
+    max_score: 79
+  - code: IGNORE
+    label: Ignore
+    decision: IGNORE
+    max_score: 59
+tier_multipliers:
+  "1": 3
+  "2": 2
+  "3": 1

@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from .repository import Repository
+from .rules import RuleRegistry
 from .schemas import (
     AlphaSignalCreate,
     CampaignBatchCreate,
@@ -19,33 +20,12 @@ from .scoring_engine import ScoringEngine
 
 def seed_mvp0(session: Session) -> dict[str, int | str]:
     repository = Repository(session)
+    rules = RuleRegistry()
 
-    alpha_signals = {
-        "AS-001": repository.create_alpha_signal(
-            AlphaSignalCreate(
-                code="AS-001",
-                name="Growth Pressure",
-                required_signals=["Founder discusses growth", "New service launch"],
-                bonus_score=15,
-            )
-        ),
-        "AS-004": repository.create_alpha_signal(
-            AlphaSignalCreate(
-                code="AS-004",
-                name="Referral Dependency",
-                required_signals=["Founder mentions referrals", "Strong case studies"],
-                bonus_score=10,
-            )
-        ),
-        "AS-010": repository.create_alpha_signal(
-            AlphaSignalCreate(
-                code="AS-010",
-                name="Founder ROI Awareness",
-                required_signals=["Founder discusses CAC", "Founder discusses pipeline"],
-                bonus_score=15,
-            )
-        ),
-    }
+    alpha_signals = {}
+    for rule in rules.alpha_signals():
+        alpha_signal = repository.create_alpha_signal(AlphaSignalCreate(**rule))
+        alpha_signals[alpha_signal.code] = alpha_signal
 
     campaign_batch = repository.create_campaign_batch(
         CampaignBatchCreate(name="MVP 0 Seed Campaign", segment=Segment.AI_AUTOMATION)

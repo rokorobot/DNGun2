@@ -1,0 +1,41 @@
+signals:
+  - code: founder_discusses_growth
+    name: Founder discusses growth
+    tier: 1
+    category: buying_intent
+  - code: new_service_launch
+    name: New service launch
+    tier: 1
+    category: trigger_event
+  - code: hiring_sdr
+    name: Hiring SDR
+    tier: 1
+    category: buying_intent
+  - code: recent_case_study
+    name: Recent case study
+    tier: 1
+    category: proof
+  - code: founder_mentions_referrals
+    name: Founder mentions referrals
+    tier: 1
+    category: acquisition_gap
+  - code: strong_case_studies
+    name: Strong case studies
+    tier: 2
+    category: proof
+  - code: no_visible_sales_process
+    name: No visible sales process
+    tier: 2
+    category: acquisition_gap
+  - code: website_quality
+    name: Website quality
+    tier: 2
+    category: fit
+  - code: founder_contact_path_visible
+    name: Founder contact path visible
+    tier: 3
+    category: execution_fit
+  - code: company_size_fit
+    name: Company size fit
+    tier: 3
+    category: icp_fit
