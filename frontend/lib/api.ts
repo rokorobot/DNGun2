@@ -88,6 +88,36 @@ export type EvidenceEntry = {
   created_at: string;
 };
 
+export type CampaignBatch = {
+  id: string;
+  name: string;
+  segment?: Segment | null;
+  status: "DRAFT" | "ACTIVE" | "COMPLETED" | "ARCHIVED";
+  notes?: string | null;
+  created_at: string;
+};
+
+export type CampaignBatchProspect = {
+  id: string;
+  campaign_batch_id: string;
+  prospect_id: string;
+  created_at: string;
+};
+
+export type CampaignOutcome = {
+  id: string;
+  campaign_batch_id: string;
+  prospect_id: string;
+  contacted: boolean;
+  replied: boolean;
+  call_booked: boolean;
+  proposal_requested: boolean;
+  paid_pilot: boolean;
+  lost_deal: boolean;
+  outcome_notes?: string | null;
+  recorded_at: string;
+};
+
 export type AlphaSignalRule = {
   code: string;
   name: string;
@@ -192,6 +222,35 @@ export function createEvidenceEntry(data: {
   });
 }
 
+export function listCampaignBatches() {
+  return request<CampaignBatch[]>("/campaign-batches");
+}
+
+export function listCampaignBatchProspects(campaignBatchId: string) {
+  return request<CampaignBatchProspect[]>(`/campaign-batches/${campaignBatchId}/prospects`);
+}
+
+export function listCampaignOutcomes(campaignBatchId?: string) {
+  const path = campaignBatchId
+    ? `/campaign-outcomes?campaign_batch_id=${encodeURIComponent(campaignBatchId)}`
+    : "/campaign-outcomes";
+  return request<CampaignOutcome[]>(path);
+}
+
+export function createCampaignOutcome(data: CampaignOutcomePayload) {
+  return request<CampaignOutcome>("/campaign-outcomes", {
+    method: "POST",
+    body: JSON.stringify(data)
+  });
+}
+
+export function updateCampaignOutcome(campaignOutcomeId: string, data: CampaignOutcomePayload) {
+  return request<CampaignOutcome>(`/campaign-outcomes/${campaignOutcomeId}`, {
+    method: "PUT",
+    body: JSON.stringify(data)
+  });
+}
+
 export function getAlphaSignalRules() {
   return request<AlphaSignalRule[]>("/rules/alpha-signals");
 }
@@ -209,3 +268,15 @@ export async function getCampaignIntelligenceMarkdown() {
   }
   return response.text();
 }
+
+export type CampaignOutcomePayload = {
+  campaign_batch_id: string;
+  prospect_id: string;
+  contacted: boolean;
+  replied: boolean;
+  call_booked: boolean;
+  proposal_requested: boolean;
+  paid_pilot: boolean;
+  lost_deal: boolean;
+  outcome_notes?: string;
+};

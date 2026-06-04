@@ -4,6 +4,7 @@ import {
   Activity,
   BarChart3,
   BookOpenCheck,
+  CheckSquare,
   ClipboardList,
   FileText,
   Gauge,
@@ -20,13 +21,20 @@ import {
   addSignal,
   AlphaSignalRule,
   calculateScore,
+  CampaignBatch,
+  CampaignBatchProspect,
   CampaignIntelligenceReport,
+  CampaignOutcome,
+  createCampaignOutcome,
   createEvidenceEntry,
   createProspect,
   EvidenceEntry,
   getAlphaSignalRules,
   getCampaignIntelligenceMarkdown,
   getCampaignIntelligenceReport,
+  listCampaignBatches,
+  listCampaignBatchProspects,
+  listCampaignOutcomes,
   listProspectAlphaSignals,
   listProspects,
   listProspectScores,
@@ -36,11 +44,12 @@ import {
   ProspectAlphaSignal,
   ProspectScore,
   Segment,
-  Signal
+  Signal,
+  updateCampaignOutcome
 } from "../lib/api";
 
 const segments: Segment[] = ["AI_AUTOMATION", "REVOPS", "SEO", "WEBFLOW"];
-type View = "inbox" | "scoring" | "report" | "evidence";
+type View = "inbox" | "scoring" | "report" | "evidence" | "outcomes";
 
 export default function Home() {
   const [view, setView] = useState<View>("scoring");
@@ -52,6 +61,10 @@ export default function Home() {
   const [report, setReport] = useState<CampaignIntelligenceReport | null>(null);
   const [markdown, setMarkdown] = useState("");
   const [evidenceEntries, setEvidenceEntries] = useState<EvidenceEntry[]>([]);
+  const [campaignBatches, setCampaignBatches] = useState<CampaignBatch[]>([]);
+  const [selectedCampaignBatchId, setSelectedCampaignBatchId] = useState("");
+  const [campaignBatchProspects, setCampaignBatchProspects] = useState<CampaignBatchProspect[]>([]);
+  const [campaignOutcomes, setCampaignOutcomes] = useState<CampaignOutcome[]>([]);
   const [alphaRules, setAlphaRules] = useState<AlphaSignalRule[]>([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -116,10 +129,37 @@ export default function Home() {
     }
   }
 
+  async function refreshCampaignWorkbench(batchId = selectedCampaignBatchId) {
+    setLoading(true);
+    setMessage("");
+    try {
+      const batches = await listCampaignBatches();
+      setCampaignBatches(batches);
+      const activeBatchId = batchId || batches[0]?.id || "";
+      if (!selectedCampaignBatchId && activeBatchId) setSelectedCampaignBatchId(activeBatchId);
+      if (activeBatchId) {
+        const [members, outcomes] = await Promise.all([
+          listCampaignBatchProspects(activeBatchId),
+          listCampaignOutcomes(activeBatchId)
+        ]);
+        setCampaignBatchProspects(members);
+        setCampaignOutcomes(outcomes);
+      } else {
+        setCampaignBatchProspects([]);
+        setCampaignOutcomes([]);
+      }
+    } catch (error) {
+      setMessage(readError(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     void refreshProspects();
     void refreshReport();
     void refreshEvidenceEntries();
+    void refreshCampaignWorkbench();
     void getAlphaSignalRules().then(setAlphaRules).catch((error) => setMessage(readError(error)));
   }, []);
 
@@ -132,7 +172,12 @@ export default function Home() {
   useEffect(() => {
     if (view === "report") void refreshReport();
     if (view === "evidence") void refreshEvidenceEntries();
+    if (view === "outcomes") void refreshCampaignWorkbench();
   }, [view]);
+
+  useEffect(() => {
+    if (selectedCampaignBatchId) void refreshCampaignWorkbench(selectedCampaignBatchId);
+  }, [selectedCampaignBatchId]);
 
   const activeSegment = selectedProspect?.segment ?? "AI_AUTOMATION";
 
@@ -220,10 +265,11 @@ export default function Home() {
               void refreshProspects();
               void refreshReport();
               void refreshEvidenceEntries();
+              void refreshCampaignWorkbench();
             }}
           />
 
-          <nav className="grid gap-2 md:grid-cols-4">
+          <nav className="grid gap-2 md:grid-cols-5">
             <NavButton active={view === "inbox"} onClick={() => setView("inbox")}>
               <ClipboardList size={15} /> Prospect Inbox
             </NavButton>
@@ -232,6 +278,9 @@ export default function Home() {
             </NavButton>
             <NavButton active={view === "report"} onClick={() => setView("report")}>
               <BarChart3 size={15} /> Campaign Report
+            </NavButton>
+            <NavButton active={view === "outcomes"} onClick={() => setView("outcomes")}>
+              <CheckSquare size={15} /> Campaign Outcomes
             </NavButton>
             <NavButton active={view === "evidence"} onClick={() => setView("evidence")}>
               <BookOpenCheck size={15} /> Evidence Ledger
@@ -263,6 +312,22 @@ export default function Home() {
           ) : null}
           {view === "report" ? (
             <ReportWorkspace markdown={markdown} onRefresh={refreshReport} report={report} />
+          ) : null}
+          {view === "outcomes" ? (
+            <CampaignOutcomeWorkbench
+              batches={campaignBatches}
+              batchProspects={campaignBatchProspects}
+              outcomes={campaignOutcomes}
+              prospects={prospects}
+              selectedBatchId={selectedCampaignBatchId}
+              onBatchChange={setSelectedCampaignBatchId}
+              onUpdated={async () => {
+                await refreshCampaignWorkbench(selectedCampaignBatchId);
+                await refreshReport();
+                await refreshEvidenceEntries();
+              }}
+              setMessage={setMessage}
+            />
           ) : null}
           {view === "evidence" ? (
             <EvidenceLedgerWorkspace
@@ -734,6 +799,151 @@ function ReportWorkspace({ report, markdown, onRefresh }: { report: CampaignInte
         <ConsolePre title="Markdown Preview" value={markdown || "No markdown loaded."} />
       </div>
     </Panel>
+  );
+}
+
+function CampaignOutcomeWorkbench({
+  batches,
+  batchProspects,
+  outcomes,
+  prospects,
+  selectedBatchId,
+  onBatchChange,
+  onUpdated,
+  setMessage
+}: {
+  batches: CampaignBatch[];
+  batchProspects: CampaignBatchProspect[];
+  outcomes: CampaignOutcome[];
+  prospects: Prospect[];
+  selectedBatchId: string;
+  onBatchChange: (batchId: string) => void;
+  onUpdated: () => Promise<void>;
+  setMessage: (message: string) => void;
+}) {
+  const prospectById = new Map(prospects.map((prospect) => [prospect.id, prospect]));
+  const outcomeByProspect = new Map<string, CampaignOutcome>();
+  for (const outcome of outcomes) {
+    if (!outcomeByProspect.has(outcome.prospect_id)) outcomeByProspect.set(outcome.prospect_id, outcome);
+  }
+  const activeBatch = batches.find((batch) => batch.id === selectedBatchId) ?? null;
+  const contacted = outcomes.filter((outcome) => outcome.contacted).length;
+  const replied = outcomes.filter((outcome) => outcome.replied).length;
+  const pilots = outcomes.filter((outcome) => outcome.paid_pilot).length;
+
+  async function submit(event: FormEvent<HTMLFormElement>, prospectId: string, existing?: CampaignOutcome) {
+    event.preventDefault();
+    if (!selectedBatchId) return;
+    setMessage("");
+    const form = new FormData(event.currentTarget);
+    const payload = {
+      campaign_batch_id: selectedBatchId,
+      prospect_id: prospectId,
+      contacted: form.get("contacted") === "on",
+      replied: form.get("replied") === "on",
+      call_booked: form.get("call_booked") === "on",
+      proposal_requested: form.get("proposal_requested") === "on",
+      paid_pilot: form.get("paid_pilot") === "on",
+      lost_deal: form.get("lost_deal") === "on",
+      outcome_notes: optionalString(form.get("outcome_notes"))
+    };
+    try {
+      if (existing) {
+        await updateCampaignOutcome(existing.id, payload);
+      } else {
+        await createCampaignOutcome(payload);
+      }
+      await onUpdated();
+    } catch (error) {
+      setMessage(readError(error));
+    }
+  }
+
+  return (
+    <Panel title="Campaign Outcome Workbench" icon={<CheckSquare size={15} />} action="learning loop">
+      <div className="mb-4 grid gap-3 md:grid-cols-4">
+        <Metric label="Batch Prospects" value={batchProspects.length} tone="green" />
+        <Metric label="Contacted" value={contacted} />
+        <Metric label="Replies" value={replied} />
+        <Metric label="Paid Pilots" value={pilots} tone={pilots ? "green" : "cyan"} />
+      </div>
+
+      <div className="mb-4 grid gap-3 border border-[#202c28] bg-[#09100f] p-4 md:grid-cols-[minmax(0,1fr)_220px_160px]">
+        <label className="block">
+          <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">Campaign Batch</span>
+          <select
+            className="h-9 w-full border border-[#293733] bg-[#121516] px-2 font-mono text-xs text-white"
+            onChange={(event) => onBatchChange(event.target.value)}
+            value={selectedBatchId}
+          >
+            {batches.map((batch) => (
+              <option key={batch.id} value={batch.id}>
+                {batch.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <InfoLine label="Status" value={activeBatch?.status ?? "NO_BATCH"} />
+        <InfoLine label="Batch ID" value={activeBatch?.id ?? "-"} />
+      </div>
+
+      <div className="space-y-3">
+        {batchProspects.map((member) => {
+          const prospect = prospectById.get(member.prospect_id);
+          const outcome = outcomeByProspect.get(member.prospect_id);
+          return (
+            <form
+              className="border border-[#202c28] bg-[#080d0d] p-4"
+              key={member.id}
+              onSubmit={(event) => void submit(event, member.prospect_id, outcome)}
+            >
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="font-mono text-sm font-bold text-white">{prospect?.company_name ?? "Unknown Prospect"}</div>
+                  <div className="mt-1 font-mono text-[11px] text-[#74837c]">
+                    {member.prospect_id} / {prospect?.segment ?? "NO_SEGMENT"} / {outcome?.id ?? "NO_OUTCOME"}
+                  </div>
+                </div>
+                <button className="inline-flex h-8 items-center gap-2 border border-[#00a85f] bg-[#06351f] px-3 font-mono text-xs uppercase text-[#00e084]" type="submit">
+                  <Save size={13} /> {outcome ? "Update" : "Record"}
+                </button>
+              </div>
+
+              <div className="grid gap-2 xl:grid-cols-[repeat(6,minmax(0,1fr))_minmax(220px,1.5fr)]">
+                <OutcomeToggle defaultChecked={outcome?.contacted ?? false} label="Contacted" name="contacted" />
+                <OutcomeToggle defaultChecked={outcome?.replied ?? false} label="Replied" name="replied" />
+                <OutcomeToggle defaultChecked={outcome?.call_booked ?? false} label="Call Booked" name="call_booked" />
+                <OutcomeToggle defaultChecked={outcome?.proposal_requested ?? false} label="Proposal" name="proposal_requested" />
+                <OutcomeToggle defaultChecked={outcome?.paid_pilot ?? false} label="Paid Pilot" name="paid_pilot" />
+                <OutcomeToggle defaultChecked={outcome?.lost_deal ?? false} label="Lost Deal" name="lost_deal" />
+                <label className="block">
+                  <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">Outcome Notes</span>
+                  <input
+                    className="h-9 w-full border border-[#293733] bg-[#121516] px-2 text-sm text-white"
+                    defaultValue={outcome?.outcome_notes ?? ""}
+                    name="outcome_notes"
+                  />
+                </label>
+              </div>
+            </form>
+          );
+        })}
+        {batchProspects.length === 0 ? (
+          <div className="border border-[#202c28] bg-[#080d0d] p-6 text-center font-mono text-xs uppercase text-[#74837c]">
+            No prospects assigned to selected campaign batch
+          </div>
+        ) : null}
+      </div>
+    </Panel>
+  );
+}
+
+function OutcomeToggle({ defaultChecked, label, name }: { defaultChecked: boolean; label: string; name: string }) {
+  return (
+    <label className="flex h-9 items-center gap-2 border border-[#293733] bg-[#101516] px-3 font-mono text-[10px] uppercase text-[#dce8e1]">
+      <input className="h-3.5 w-3.5 accent-[#00d277]" defaultChecked={defaultChecked} name={name} type="checkbox" />
+      <span>{label}</span>
+    </label>
   );
 }
 

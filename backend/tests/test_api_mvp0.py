@@ -142,6 +142,54 @@ def test_duplicate_campaign_batch_prospect_is_rejected(tmp_path):
     assert duplicate.status_code == 409
 
 
+def test_campaign_batch_prospects_can_be_listed_and_outcome_updated(tmp_path):
+    client = TestClient(create_app(tmp_path / "mvp0.sqlite3"))
+
+    prospect = client.post(
+        "/prospects",
+        json={"company_name": "Outcome Workbench Co", "segment": "AI_AUTOMATION"},
+    ).json()
+    campaign_batch = client.post(
+        "/campaign-batches",
+        json={"name": "AI Automation Batch", "segment": "AI_AUTOMATION"},
+    ).json()
+    client.post(f"/campaign-batches/{campaign_batch['id']}/prospects/{prospect['id']}")
+
+    batch_prospects = client.get(
+        f"/campaign-batches/{campaign_batch['id']}/prospects"
+    )
+    assert batch_prospects.status_code == 200
+    assert batch_prospects.json()[0]["prospect_id"] == prospect["id"]
+
+    outcome = client.post(
+        "/campaign-outcomes",
+        json={
+            "campaign_batch_id": campaign_batch["id"],
+            "prospect_id": prospect["id"],
+            "contacted": True,
+        },
+    ).json()
+    updated = client.put(
+        f"/campaign-outcomes/{outcome['id']}",
+        json={
+            "campaign_batch_id": campaign_batch["id"],
+            "prospect_id": prospect["id"],
+            "contacted": True,
+            "replied": True,
+            "call_booked": True,
+            "outcome_notes": "Founder replied and booked discovery.",
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["replied"] is True
+    outcomes = client.get(
+        f"/campaign-outcomes?campaign_batch_id={campaign_batch['id']}"
+    ).json()
+    assert len(outcomes) == 1
+    assert outcomes[0]["outcome_notes"] == "Founder replied and booked discovery."
+
+
 def test_campaign_outcome_requires_existing_batch_and_prospect(tmp_path):
     client = TestClient(create_app(tmp_path / "mvp0.sqlite3"))
 

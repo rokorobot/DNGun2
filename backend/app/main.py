@@ -226,6 +226,17 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         except RepositoryConflictError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @app.get(
+        "/campaign-batches/{campaign_batch_id}/prospects",
+        response_model=list[CampaignBatchProspect],
+    )
+    def list_campaign_batch_prospects(
+        campaign_batch_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> list[CampaignBatchProspect]:
+        require_campaign_batch(repository, campaign_batch_id)
+        return repository.list_campaign_batch_prospects(campaign_batch_id)
+
     @app.post("/campaign-outcomes", response_model=CampaignOutcome, status_code=201)
     def create_campaign_outcome(
         data: CampaignOutcomeCreate,
@@ -241,6 +252,27 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 detail="Prospect must belong to campaign batch before recording outcome",
             )
         return repository.create_campaign_outcome(data)
+
+    @app.put("/campaign-outcomes/{campaign_outcome_id}", response_model=CampaignOutcome)
+    def update_campaign_outcome(
+        campaign_outcome_id: str,
+        data: CampaignOutcomeCreate,
+        repository: Repository = Depends(get_repository),
+    ) -> CampaignOutcome:
+        if repository.get_campaign_outcome(campaign_outcome_id) is None:
+            raise HTTPException(status_code=404, detail="Campaign outcome not found")
+        require_campaign_batch(repository, data.campaign_batch_id)
+        require_prospect(repository, data.prospect_id)
+        if not repository.campaign_batch_contains_prospect(
+            data.campaign_batch_id, data.prospect_id
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Prospect must belong to campaign batch before recording outcome",
+            )
+        outcome = repository.update_campaign_outcome(campaign_outcome_id, data)
+        assert outcome is not None
+        return outcome
 
     @app.get("/campaign-outcomes", response_model=list[CampaignOutcome])
     def list_campaign_outcomes(

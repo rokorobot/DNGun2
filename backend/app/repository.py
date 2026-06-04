@@ -255,6 +255,16 @@ class Repository:
         )
         return existing is not None
 
+    def list_campaign_batch_prospects(
+        self, campaign_batch_id: str
+    ) -> list[CampaignBatchProspect]:
+        rows = self.session.scalars(
+            select(models.CampaignBatchProspectModel)
+            .where(models.CampaignBatchProspectModel.campaign_batch_id == campaign_batch_id)
+            .order_by(models.CampaignBatchProspectModel.created_at.asc())
+        ).all()
+        return [CampaignBatchProspect.model_validate(row) for row in rows]
+
     def create_campaign_outcome(self, data: CampaignOutcomeCreate) -> CampaignOutcome:
         model = models.CampaignOutcomeModel(
             id=prefixed_id("CO"),
@@ -277,6 +287,22 @@ class Repository:
             statement.order_by(models.CampaignOutcomeModel.recorded_at.desc())
         ).all()
         return [CampaignOutcome.model_validate(row) for row in rows]
+
+    def get_campaign_outcome(self, campaign_outcome_id: str) -> CampaignOutcome | None:
+        model = self.session.get(models.CampaignOutcomeModel, campaign_outcome_id)
+        return CampaignOutcome.model_validate(model) if model else None
+
+    def update_campaign_outcome(
+        self, campaign_outcome_id: str, data: CampaignOutcomeCreate
+    ) -> CampaignOutcome | None:
+        model = self.session.get(models.CampaignOutcomeModel, campaign_outcome_id)
+        if model is None:
+            return None
+        for key, value in data.model_dump(mode="json").items():
+            setattr(model, key, value)
+        self.session.commit()
+        self.session.refresh(model)
+        return CampaignOutcome.model_validate(model)
 
     def create_evidence_entry(self, data: EvidenceEntryCreate) -> EvidenceEntry:
         model = models.EvidenceEntryModel(
