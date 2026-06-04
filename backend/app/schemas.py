@@ -232,3 +232,61 @@ class CampaignIntelligenceReport(BaseModel):
     confidence_before: float | None = None
     confidence_after: float | None = None
     confidence_delta: float | None = None
+
+
+class SignalPerformanceRead(BaseModel):
+    signalType: str
+    timesSeen: int
+    contacted: int
+    replied: int
+    callBooked: int
+    proposalRequested: int
+    paidPilot: int
+    replyRate: float
+    callRate: float
+    proposalRate: float
+    pilotRate: float
+    confidence: str
+    recommendation: str
+
+
+class AlphaSignalPerformanceRead(BaseModel):
+    code: str
+    name: str
+    timesMatched: int
+    contacted: int
+    replied: int
+    callBooked: int
+    proposalRequested: int
+    paidPilot: int
+    replyRate: float
+    callRate: float
+    proposalRate: float
+    pilotRate: float
+    confidence: str
+    recommendation: str
+
+
+class ScoreBandValidationRead(BaseModel):
+    scoreBand: str
+    prospectsInBand: int
+    contacted: int
+    replied: int
+    callBooked: int
+    proposalRequested: int
+    paidPilot: int
+    replyRate: float
+    callRate: float
+    proposalRate: float
+    pilotRate: float
+    confidence: str
+    recommendation: str
+
+
+class LearningSummaryRead(BaseModel):
+    topPerformingSignals: list[SignalPerformanceRead]
+    weakSignals: list[SignalPerformanceRead]
+    topAlphaSignals: list[AlphaSignalPerformanceRead]
+    weakAlphaSignals: list[AlphaSignalPerformanceRead]
+    scoreBandValidation: list[ScoreBandValidationRead]
+    recommendedRuleChanges: list[str]

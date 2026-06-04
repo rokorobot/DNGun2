@@ -8,6 +8,7 @@ import {
   ClipboardList,
   FileText,
   Gauge,
+  LineChart,
   Plus,
   RefreshCw,
   Save,
@@ -32,6 +33,8 @@ import {
   getAlphaSignalRules,
   getCampaignIntelligenceMarkdown,
   getCampaignIntelligenceReport,
+  getLearningMarkdown,
+  getLearningSummary,
   listCampaignBatches,
   listCampaignBatchProspects,
   listCampaignOutcomes,
@@ -45,11 +48,12 @@ import {
   ProspectScore,
   Segment,
   Signal,
+  LearningSummary,
   updateCampaignOutcome
 } from "../lib/api";
 
 const segments: Segment[] = ["AI_AUTOMATION", "REVOPS", "SEO", "WEBFLOW"];
-type View = "inbox" | "scoring" | "report" | "evidence" | "outcomes";
+type View = "inbox" | "scoring" | "report" | "evidence" | "outcomes" | "learning";
 
 export default function Home() {
   const [view, setView] = useState<View>("scoring");
@@ -65,6 +69,8 @@ export default function Home() {
   const [selectedCampaignBatchId, setSelectedCampaignBatchId] = useState("");
   const [campaignBatchProspects, setCampaignBatchProspects] = useState<CampaignBatchProspect[]>([]);
   const [campaignOutcomes, setCampaignOutcomes] = useState<CampaignOutcome[]>([]);
+  const [learningSummary, setLearningSummary] = useState<LearningSummary | null>(null);
+  const [learningMarkdown, setLearningMarkdown] = useState("");
   const [alphaRules, setAlphaRules] = useState<AlphaSignalRule[]>([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -155,11 +161,29 @@ export default function Home() {
     }
   }
 
+  async function refreshLearning() {
+    setLoading(true);
+    setMessage("");
+    try {
+      const [summary, reportText] = await Promise.all([
+        getLearningSummary(),
+        getLearningMarkdown()
+      ]);
+      setLearningSummary(summary);
+      setLearningMarkdown(reportText);
+    } catch (error) {
+      setMessage(readError(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     void refreshProspects();
     void refreshReport();
     void refreshEvidenceEntries();
     void refreshCampaignWorkbench();
+    void refreshLearning();
     void getAlphaSignalRules().then(setAlphaRules).catch((error) => setMessage(readError(error)));
   }, []);
 
@@ -173,6 +197,7 @@ export default function Home() {
     if (view === "report") void refreshReport();
     if (view === "evidence") void refreshEvidenceEntries();
     if (view === "outcomes") void refreshCampaignWorkbench();
+    if (view === "learning") void refreshLearning();
   }, [view]);
 
   useEffect(() => {
@@ -266,10 +291,11 @@ export default function Home() {
               void refreshReport();
               void refreshEvidenceEntries();
               void refreshCampaignWorkbench();
+              void refreshLearning();
             }}
           />
 
-          <nav className="grid gap-2 md:grid-cols-5">
+          <nav className="grid gap-2 md:grid-cols-6">
             <NavButton active={view === "inbox"} onClick={() => setView("inbox")}>
               <ClipboardList size={15} /> Prospect Inbox
             </NavButton>
@@ -281,6 +307,9 @@ export default function Home() {
             </NavButton>
             <NavButton active={view === "outcomes"} onClick={() => setView("outcomes")}>
               <CheckSquare size={15} /> Campaign Outcomes
+            </NavButton>
+            <NavButton active={view === "learning"} onClick={() => setView("learning")}>
+              <LineChart size={15} /> Learning Intelligence
             </NavButton>
             <NavButton active={view === "evidence"} onClick={() => setView("evidence")}>
               <BookOpenCheck size={15} /> Evidence Ledger
@@ -327,6 +356,13 @@ export default function Home() {
                 await refreshEvidenceEntries();
               }}
               setMessage={setMessage}
+            />
+          ) : null}
+          {view === "learning" ? (
+            <LearningIntelligenceWorkspace
+              markdown={learningMarkdown}
+              onRefresh={refreshLearning}
+              summary={learningSummary}
             />
           ) : null}
           {view === "evidence" ? (
@@ -799,6 +835,155 @@ function ReportWorkspace({ report, markdown, onRefresh }: { report: CampaignInte
         <ConsolePre title="Markdown Preview" value={markdown || "No markdown loaded."} />
       </div>
     </Panel>
+  );
+}
+
+function LearningIntelligenceWorkspace({
+  summary,
+  markdown,
+  onRefresh
+}: {
+  summary: LearningSummary | null;
+  markdown: string;
+  onRefresh: () => Promise<void>;
+}) {
+  return (
+    <Panel title="Learning Intelligence" icon={<LineChart size={15} />} action="evidence validation">
+      <div className="mb-4 flex justify-end">
+        <button className="inline-flex h-9 items-center gap-2 border border-[#00a9d6] bg-[#062633] px-3 font-mono text-xs uppercase text-[#00c8ff]" onClick={() => void onRefresh()} type="button">
+          <RefreshCw size={14} /> Refresh Learning
+        </button>
+      </div>
+
+      <div className="grid gap-4 2xl:grid-cols-2">
+        <LearningList
+          empty="No validated signal winners yet"
+          items={summary?.topPerformingSignals ?? []}
+          title="Top Performing Signals"
+          type="signal"
+        />
+        <LearningList
+          empty="No weak signal patterns yet"
+          items={summary?.weakSignals ?? []}
+          title="Weak Signals"
+          type="signal"
+        />
+        <LearningList
+          empty="No validated Alpha Signals yet"
+          items={summary?.topAlphaSignals ?? []}
+          title="Top Alpha Signals"
+          type="alpha"
+        />
+        <LearningList
+          empty="No weak Alpha Signals yet"
+          items={summary?.weakAlphaSignals ?? []}
+          title="Weak Alpha Signals"
+          type="alpha"
+        />
+      </div>
+
+      <section className="mt-4 border border-[#202c28] bg-[#0b0f10]">
+        <div className="border-b border-[#202c28] px-4 py-3 font-mono text-xs font-bold uppercase tracking-[0.12em] text-white">
+          Score Band Validation
+        </div>
+        <div className="overflow-auto">
+          <table className="w-full min-w-[820px] border-collapse">
+            <thead className="bg-[#0d1413]">
+              <tr>
+                <Th>Band</Th>
+                <Th>Prospects</Th>
+                <Th>Contacted</Th>
+                <Th>Reply</Th>
+                <Th>Call</Th>
+                <Th>Pilot</Th>
+                <Th>Confidence</Th>
+                <Th>Recommendation</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {(summary?.scoreBandValidation ?? []).map((band) => (
+                <tr className="bg-[#080d0d]" key={band.scoreBand}>
+                  <Td mono>{band.scoreBand}</Td>
+                  <Td mono>{band.prospectsInBand}</Td>
+                  <Td mono>{band.contacted}</Td>
+                  <Td mono>{formatRate(band.replyRate)}</Td>
+                  <Td mono>{formatRate(band.callRate)}</Td>
+                  <Td mono>{formatRate(band.pilotRate)}</Td>
+                  <Td mono>{band.confidence}</Td>
+                  <Td mono>{band.recommendation}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div className="mt-4 grid gap-4 2xl:grid-cols-2">
+        <section className="border border-[#202c28] bg-[#0b0f10]">
+          <div className="border-b border-[#202c28] px-4 py-3 font-mono text-xs font-bold uppercase tracking-[0.12em] text-white">
+            Recommended Rule Changes
+          </div>
+          <div className="space-y-2 p-4">
+            {(summary?.recommendedRuleChanges ?? []).map((item) => (
+              <div className="border border-[#293733] bg-[#101516] p-3 text-sm text-[#dce8e1]" key={item}>
+                {item}
+              </div>
+            ))}
+          </div>
+        </section>
+        <ConsolePre title="Learning Report Preview" value={markdown || "No learning report loaded."} />
+      </div>
+    </Panel>
+  );
+}
+
+function LearningList({
+  empty,
+  items,
+  title,
+  type
+}: {
+  empty: string;
+  items: Array<LearningSummary["topPerformingSignals"][number] | LearningSummary["topAlphaSignals"][number]>;
+  title: string;
+  type: "signal" | "alpha";
+}) {
+  return (
+    <section className="border border-[#202c28] bg-[#0b0f10]">
+      <div className="border-b border-[#202c28] px-4 py-3 font-mono text-xs font-bold uppercase tracking-[0.12em] text-white">
+        {title}
+      </div>
+      <div className="space-y-2 p-4">
+        {items.map((item) => {
+          const isSignal = "signalType" in item;
+          const name = isSignal ? item.signalType : `${item.code} ${item.name}`;
+          const seen = isSignal ? item.timesSeen : item.timesMatched;
+          return (
+            <div className="border border-[#293733] bg-[#101516] p-3" key={name}>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="font-mono text-sm font-bold text-white">{name}</div>
+                <div className="font-mono text-xs text-[#00c8ff]">{item.recommendation}</div>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+                <InfoLine label={type === "signal" ? "Times Seen" : "Matched"} value={seen} />
+                <InfoLine label="Contacted" value={item.contacted} />
+                <InfoLine label="Reply" value={formatRate(item.replyRate)} />
+                <InfoLine label="Call" value={formatRate(item.callRate)} />
+                <InfoLine label="Pilot" value={formatRate(item.pilotRate)} />
+              </div>
+              <div className="mt-2 font-mono text-[10px] uppercase text-[#74837c]">
+                Confidence // {item.confidence}
+              </div>
+            </div>
+          );
+        })}
+        {items.length === 0 ? (
+          <div className="border border-[#202c28] bg-[#080d0d] p-4 text-center font-mono text-xs uppercase text-[#74837c]">
+            {empty}
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
 

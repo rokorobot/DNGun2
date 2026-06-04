@@ -118,6 +118,64 @@ export type CampaignOutcome = {
   recorded_at: string;
 };
 
+export type SignalPerformance = {
+  signalType: string;
+  timesSeen: number;
+  contacted: number;
+  replied: number;
+  callBooked: number;
+  proposalRequested: number;
+  paidPilot: number;
+  replyRate: number;
+  callRate: number;
+  proposalRate: number;
+  pilotRate: number;
+  confidence: string;
+  recommendation: string;
+};
+
+export type AlphaSignalPerformance = {
+  code: string;
+  name: string;
+  timesMatched: number;
+  contacted: number;
+  replied: number;
+  callBooked: number;
+  proposalRequested: number;
+  paidPilot: number;
+  replyRate: number;
+  callRate: number;
+  proposalRate: number;
+  pilotRate: number;
+  confidence: string;
+  recommendation: string;
+};
+
+export type ScoreBandValidation = {
+  scoreBand: string;
+  prospectsInBand: number;
+  contacted: number;
+  replied: number;
+  callBooked: number;
+  proposalRequested: number;
+  paidPilot: number;
+  replyRate: number;
+  callRate: number;
+  proposalRate: number;
+  pilotRate: number;
+  confidence: string;
+  recommendation: string;
+};
+
+export type LearningSummary = {
+  topPerformingSignals: SignalPerformance[];
+  weakSignals: SignalPerformance[];
+  topAlphaSignals: AlphaSignalPerformance[];
+  weakAlphaSignals: AlphaSignalPerformance[];
+  scoreBandValidation: ScoreBandValidation[];
+  recommendedRuleChanges: string[];
+};
+
 export type AlphaSignalRule = {
   code: string;
   name: string;
@@ -249,6 +307,20 @@ export function updateCampaignOutcome(campaignOutcomeId: string, data: CampaignO
     method: "PUT",
     body: JSON.stringify(data)
   });
+}
+
+export function getLearningSummary() {
+  return request<LearningSummary>("/learning/summary");
+}
+
+export async function getLearningMarkdown() {
+  const response = await fetch(`${API_BASE}/learning/report.md`, {
+    cache: "no-store"
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.text();
 }
 
 export function getAlphaSignalRules() {

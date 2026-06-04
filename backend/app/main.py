@@ -8,6 +8,12 @@ from sqlalchemy.orm import Session
 
 from . import models as _models  # noqa: F401 - registers SQLAlchemy models.
 from .database import create_session_factory
+from .learning import (
+    calculate_alpha_signal_performance,
+    calculate_learning_summary,
+    calculate_signal_performance,
+    render_learning_markdown,
+)
 from .repository import Repository, RepositoryConflictError
 from .reporting import (
     build_campaign_intelligence_report,
@@ -27,6 +33,7 @@ from .schemas import (
     ConfidenceUpdateCreate,
     EvidenceEntry,
     EvidenceEntryCreate,
+    LearningSummaryRead,
     Prospect,
     ProspectAlphaSignal,
     ProspectAlphaSignalCreate,
@@ -35,6 +42,8 @@ from .schemas import (
     ProspectScoreRead,
     Signal,
     SignalCreate,
+    AlphaSignalPerformanceRead,
+    SignalPerformanceRead,
 )
 from .scoring_engine import ScoringEngine
 
@@ -323,6 +332,30 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     ) -> str:
         report = build_campaign_intelligence_report(session)
         return render_campaign_intelligence_markdown(report)
+
+    @app.get("/learning/signals", response_model=list[SignalPerformanceRead])
+    def get_signal_learning(
+        session: Session = Depends(get_session),
+    ) -> list[SignalPerformanceRead]:
+        return calculate_signal_performance(session)
+
+    @app.get("/learning/alpha-signals", response_model=list[AlphaSignalPerformanceRead])
+    def get_alpha_signal_learning(
+        session: Session = Depends(get_session),
+    ) -> list[AlphaSignalPerformanceRead]:
+        return calculate_alpha_signal_performance(session)
+
+    @app.get("/learning/summary", response_model=LearningSummaryRead)
+    def get_learning_summary(
+        session: Session = Depends(get_session),
+    ) -> LearningSummaryRead:
+        return calculate_learning_summary(session)
+
+    @app.get("/learning/report.md", response_class=PlainTextResponse)
+    def export_learning_report(
+        session: Session = Depends(get_session),
+    ) -> str:
+        return render_learning_markdown(calculate_learning_summary(session))
 
     return app
 
