@@ -78,6 +78,16 @@ export type CampaignIntelligenceReport = {
   confidence_delta?: number | null;
 };
 
+export type EvidenceEntry = {
+  id: string;
+  project: string;
+  evidence_type: string;
+  evidence: string;
+  impact: number;
+  source?: string | null;
+  created_at: string;
+};
+
 export type AlphaSignalRule = {
   code: string;
   name: string;
@@ -161,6 +171,25 @@ export function listProspectScores(prospectId: string) {
 
 export function getCampaignIntelligenceReport() {
   return request<CampaignIntelligenceReport>("/reports/campaign-intelligence");
+}
+
+export function listEvidenceEntries() {
+  return request<EvidenceEntry[]>("/evidence-entries");
+}
+
+export function createEvidenceEntry(data: {
+  evidence_type: string;
+  evidence: string;
+  impact: number;
+  source?: string;
+}) {
+  return request<EvidenceEntry>("/evidence-entries", {
+    method: "POST",
+    body: JSON.stringify({
+      project: "DNGun",
+      ...data
+    })
+  });
 }
 
 export function getAlphaSignalRules() {

@@ -3,6 +3,7 @@
 import {
   Activity,
   BarChart3,
+  BookOpenCheck,
   ClipboardList,
   FileText,
   Gauge,
@@ -20,13 +21,16 @@ import {
   AlphaSignalRule,
   calculateScore,
   CampaignIntelligenceReport,
+  createEvidenceEntry,
   createProspect,
+  EvidenceEntry,
   getAlphaSignalRules,
   getCampaignIntelligenceMarkdown,
   getCampaignIntelligenceReport,
   listProspectAlphaSignals,
   listProspects,
   listProspectScores,
+  listEvidenceEntries,
   listSignals,
   Prospect,
   ProspectAlphaSignal,
@@ -36,7 +40,7 @@ import {
 } from "../lib/api";
 
 const segments: Segment[] = ["AI_AUTOMATION", "REVOPS", "SEO", "WEBFLOW"];
-type View = "inbox" | "scoring" | "report";
+type View = "inbox" | "scoring" | "report" | "evidence";
 
 export default function Home() {
   const [view, setView] = useState<View>("scoring");
@@ -47,6 +51,7 @@ export default function Home() {
   const [prospectAlphaSignals, setProspectAlphaSignals] = useState<ProspectAlphaSignal[]>([]);
   const [report, setReport] = useState<CampaignIntelligenceReport | null>(null);
   const [markdown, setMarkdown] = useState("");
+  const [evidenceEntries, setEvidenceEntries] = useState<EvidenceEntry[]>([]);
   const [alphaRules, setAlphaRules] = useState<AlphaSignalRule[]>([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -99,9 +104,22 @@ export default function Home() {
     }
   }
 
+  async function refreshEvidenceEntries() {
+    setLoading(true);
+    setMessage("");
+    try {
+      setEvidenceEntries(await listEvidenceEntries());
+    } catch (error) {
+      setMessage(readError(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     void refreshProspects();
     void refreshReport();
+    void refreshEvidenceEntries();
     void getAlphaSignalRules().then(setAlphaRules).catch((error) => setMessage(readError(error)));
   }, []);
 
@@ -113,6 +131,7 @@ export default function Home() {
 
   useEffect(() => {
     if (view === "report") void refreshReport();
+    if (view === "evidence") void refreshEvidenceEntries();
   }, [view]);
 
   const activeSegment = selectedProspect?.segment ?? "AI_AUTOMATION";
@@ -200,10 +219,11 @@ export default function Home() {
             onRefresh={() => {
               void refreshProspects();
               void refreshReport();
+              void refreshEvidenceEntries();
             }}
           />
 
-          <nav className="grid gap-2 md:grid-cols-3">
+          <nav className="grid gap-2 md:grid-cols-4">
             <NavButton active={view === "inbox"} onClick={() => setView("inbox")}>
               <ClipboardList size={15} /> Prospect Inbox
             </NavButton>
@@ -212,6 +232,9 @@ export default function Home() {
             </NavButton>
             <NavButton active={view === "report"} onClick={() => setView("report")}>
               <BarChart3 size={15} /> Campaign Report
+            </NavButton>
+            <NavButton active={view === "evidence"} onClick={() => setView("evidence")}>
+              <BookOpenCheck size={15} /> Evidence Ledger
             </NavButton>
           </nav>
 
@@ -240,6 +263,16 @@ export default function Home() {
           ) : null}
           {view === "report" ? (
             <ReportWorkspace markdown={markdown} onRefresh={refreshReport} report={report} />
+          ) : null}
+          {view === "evidence" ? (
+            <EvidenceLedgerWorkspace
+              entries={evidenceEntries}
+              onCreated={async () => {
+                await refreshEvidenceEntries();
+                await refreshReport();
+              }}
+              setMessage={setMessage}
+            />
           ) : null}
         </section>
 
@@ -704,6 +737,117 @@ function ReportWorkspace({ report, markdown, onRefresh }: { report: CampaignInte
   );
 }
 
+function EvidenceLedgerWorkspace({
+  entries,
+  onCreated,
+  setMessage
+}: {
+  entries: EvidenceEntry[];
+  onCreated: () => Promise<void>;
+  setMessage: (message: string) => void;
+}) {
+  const totalImpact = entries.reduce((sum, entry) => sum + entry.impact, 0);
+  const positive = entries.filter((entry) => entry.impact > 0).length;
+  const negative = entries.filter((entry) => entry.impact < 0).length;
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+    const form = new FormData(event.currentTarget);
+    try {
+      await createEvidenceEntry({
+        evidence_type: String(form.get("evidence_type") || ""),
+        evidence: String(form.get("evidence") || ""),
+        impact: Number(form.get("impact") || 0),
+        source: optionalString(form.get("source"))
+      });
+      event.currentTarget.reset();
+      await onCreated();
+    } catch (error) {
+      setMessage(readError(error));
+    }
+  }
+
+  return (
+    <Panel title="Evidence Ledger" icon={<BookOpenCheck size={15} />} action="external reality">
+      <div className="mb-4 grid gap-3 md:grid-cols-4">
+        <Metric label="Entries" value={entries.length} tone="green" />
+        <Metric label="Positive" value={positive} />
+        <Metric label="Negative" value={negative} tone={negative ? "red" : "cyan"} />
+        <Metric label="Net Impact" value={formatSigned(totalImpact)} tone={totalImpact < 0 ? "red" : "green"} />
+      </div>
+
+      <form className="mb-4 grid gap-3 border border-[#202c28] bg-[#09100f] p-4 xl:grid-cols-[190px_1fr_120px_190px_auto]" onSubmit={submit}>
+        <label className="block">
+          <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">Evidence Type</span>
+          <select className="h-9 w-full border border-[#293733] bg-[#121516] px-2 font-mono text-xs text-white" name="evidence_type" required>
+            <option value="MARKET_INTEREST">MARKET_INTEREST</option>
+            <option value="REVENUE">REVENUE</option>
+            <option value="VALIDATION">VALIDATION</option>
+            <option value="NEGATIVE">NEGATIVE</option>
+            <option value="DELIVERY">DELIVERY</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">Evidence</span>
+          <input className="h-9 w-full border border-[#293733] bg-[#121516] px-2 text-sm text-white" name="evidence" required />
+        </label>
+        <label className="block">
+          <span className="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-[#74837c]">Impact</span>
+          <input className="h-9 w-full border border-[#293733] bg-[#121516] px-2 font-mono text-xs text-white" name="impact" required type="number" />
+        </label>
+        <ConsoleField label="Source" name="source" />
+        <button className="inline-flex h-9 self-end items-center justify-center gap-2 border border-[#00a85f] bg-[#06351f] px-3 font-mono text-xs uppercase text-[#00e084]" type="submit">
+          <Save size={14} /> Record
+        </button>
+      </form>
+
+      <div className="overflow-auto border border-[#202c28]">
+        <table className="w-full min-w-[980px] border-collapse">
+          <thead className="bg-[#0d1413]">
+            <tr>
+              <Th>Created</Th>
+              <Th>Type</Th>
+              <Th>Impact</Th>
+              <Th>Source</Th>
+              <Th>Linked</Th>
+              <Th>Evidence</Th>
+              <Th>ID</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => {
+              const link = evidenceLink(entry.source);
+              return (
+                <tr className="bg-[#080d0d] hover:bg-[#0d1514]" key={entry.id}>
+                  <Td mono>{formatDate(entry.created_at)}</Td>
+                  <Td mono>{entry.evidence_type}</Td>
+                  <Td mono>
+                    <span className={entry.impact < 0 ? "text-[#ff5d55]" : "text-[#00e084]"}>
+                      {formatSigned(entry.impact)}
+                    </span>
+                  </Td>
+                  <Td mono>{entry.source || "UNSOURCED"}</Td>
+                  <Td mono>
+                    <span className={link === "UNLINKED" ? "text-[#74837c]" : "text-[#00c8ff]"}>{link}</span>
+                  </Td>
+                  <Td>{entry.evidence}</Td>
+                  <Td mono>{entry.id}</Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {entries.length === 0 ? (
+          <div className="border-t border-[#202c28] p-6 text-center font-mono text-xs uppercase text-[#74837c]">
+            No evidence entries recorded
+          </div>
+        ) : null}
+      </div>
+    </Panel>
+  );
+}
+
 function TelemetryStrip({ report, prospects, selected, loading, onRefresh }: { report: CampaignIntelligenceReport | null; prospects: number; selected: string; loading: boolean; onRefresh: () => void }) {
   return (
     <section className="grid gap-2 md:grid-cols-[repeat(5,minmax(0,1fr))_auto]">
@@ -832,4 +976,28 @@ function readError(error: unknown) {
 
 function formatRate(value: number) {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatSigned(value: number) {
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function formatDate(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function evidenceLink(source?: string | null) {
+  if (!source) return "UNLINKED";
+  const normalized = source.toUpperCase();
+  if (normalized.startsWith("P-")) return "PROSPECT";
+  if (normalized.startsWith("CB-")) return "CAMPAIGN";
+  if (normalized.startsWith("CO-")) return "OUTCOME";
+  return "SOURCE";
 }
