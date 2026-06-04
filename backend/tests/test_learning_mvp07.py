@@ -141,3 +141,32 @@ def test_learning_endpoints_do_not_modify_rule_files(tmp_path):
 
 def _by_key(rows: list[dict], key: str) -> dict[str, dict]:
     return {row[key]: row for row in rows}
+
+
+def test_wilson_ranking_and_scoping(tmp_path):
+    client = seeded_client(tmp_path)
+
+    # 1. Verify Wilson Rank fields are populated
+    signals = client.get("/learning/signals").json()
+    assert len(signals) > 0
+    first_sig = signals[0]
+    assert "replyRateRank" in first_sig
+    assert "pilotRateRank" in first_sig
+    assert "confidenceRank" in first_sig
+
+    # Assert they are floats
+    assert isinstance(first_sig["replyRateRank"], float)
+    assert isinstance(first_sig["confidenceRank"], float)
+
+    # Verify sorted order of signals by confidenceRank descending
+    ranks = [s["confidenceRank"] for s in signals]
+    assert ranks == sorted(ranks, reverse=True)
+
+    # 2. Verify Scoping query params return filtered results
+    ai_signals = client.get("/learning/signals?pdm_code=AI-AUTOMATION").json()
+    assert isinstance(ai_signals, list)
+
+    # Let's request with a dummy pdm_code that doesn't exist
+    empty_signals = client.get("/learning/signals?pdm_code=NON_EXISTENT_PDM").json()
+    assert len(empty_signals) == 0
+

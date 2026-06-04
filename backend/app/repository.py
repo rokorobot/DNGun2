@@ -39,6 +39,8 @@ from .schemas import (
     ScoreExplanationRead,
     Signal,
     SignalCreate,
+    SegmentRegistry,
+    SegmentRegistryCreate,
     utc_now_iso,
 )
 
@@ -56,6 +58,9 @@ class Repository:
         self.session = session
 
     def create_prospect(self, data: ProspectCreate) -> Prospect:
+        segment = self.get_segment_by_code(data.segment)
+        if not segment:
+            raise RepositoryConflictError(f"Segment code '{data.segment}' is not registered")
         model = models.ProspectModel(
             id=prefixed_id("P"),
             created_at=utc_now_iso(),
@@ -75,6 +80,34 @@ class Repository:
     def get_prospect(self, prospect_id: str) -> Prospect | None:
         model = self.session.get(models.ProspectModel, prospect_id)
         return Prospect.model_validate(model) if model else None
+
+    def create_segment_registry_entry(self, data: SegmentRegistryCreate) -> SegmentRegistry:
+        existing = self.session.scalar(
+            select(models.SegmentRegistryModel).where(models.SegmentRegistryModel.code == data.code)
+        )
+        if existing:
+            raise RepositoryConflictError("Segment code already exists")
+        model = models.SegmentRegistryModel(
+            id=prefixed_id("SEG"),
+            created_at=utc_now_iso(),
+            **data.model_dump(mode="json"),
+        )
+        self.session.add(model)
+        self.session.commit()
+        self.session.refresh(model)
+        return SegmentRegistry.model_validate(model)
+
+    def list_segments(self) -> list[SegmentRegistry]:
+        rows = self.session.scalars(
+            select(models.SegmentRegistryModel).order_by(models.SegmentRegistryModel.code.asc())
+        ).all()
+        return [SegmentRegistry.model_validate(row) for row in rows]
+
+    def get_segment_by_code(self, code: str) -> SegmentRegistry | None:
+        model = self.session.scalar(
+            select(models.SegmentRegistryModel).where(models.SegmentRegistryModel.code == code)
+        )
+        return SegmentRegistry.model_validate(model) if model else None
 
     def create_signal(self, prospect_id: str, data: SignalCreate) -> Signal:
         model = models.SignalModel(
@@ -326,11 +359,16 @@ class Repository:
         self.session.refresh(model)
         return EvidenceEntry.model_validate(model)
 
-    def list_evidence_entries(self) -> list[EvidenceEntry]:
+    def list_evidence_entries(
+        self, pdm_code: str | None = None, offer_id: str | None = None
+    ) -> list[EvidenceEntry]:
+        statement = select(models.EvidenceEntryModel)
+        if pdm_code:
+            statement = statement.where(models.EvidenceEntryModel.pdm_code == pdm_code)
+        if offer_id:
+            statement = statement.where(models.EvidenceEntryModel.offer_id == offer_id)
         rows = self.session.scalars(
-            select(models.EvidenceEntryModel).order_by(
-                models.EvidenceEntryModel.created_at.desc()
-            )
+            statement.order_by(models.EvidenceEntryModel.created_at.desc())
         ).all()
         return [EvidenceEntry.model_validate(row) for row in rows]
 
@@ -351,11 +389,16 @@ class Repository:
         self.session.refresh(model)
         return ConfidenceUpdate.model_validate(model)
 
-    def list_confidence_updates(self) -> list[ConfidenceUpdate]:
+    def list_confidence_updates(
+        self, pdm_code: str | None = None, offer_id: str | None = None
+    ) -> list[ConfidenceUpdate]:
+        statement = select(models.ConfidenceUpdateModel)
+        if pdm_code:
+            statement = statement.where(models.ConfidenceUpdateModel.pdm_code == pdm_code)
+        if offer_id:
+            statement = statement.where(models.ConfidenceUpdateModel.offer_id == offer_id)
         rows = self.session.scalars(
-            select(models.ConfidenceUpdateModel).order_by(
-                models.ConfidenceUpdateModel.created_at.desc()
-            )
+            statement.order_by(models.ConfidenceUpdateModel.created_at.desc())
         ).all()
         return [ConfidenceUpdate.model_validate(row) for row in rows]
 

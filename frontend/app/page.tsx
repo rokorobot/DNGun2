@@ -63,14 +63,16 @@ import {
   OfferProspectFit,
   rejectOfferProposal,
   listOfferProspectFits,
-  updateCampaignOutcome
+  updateCampaignOutcome,
+  listSegments,
+  SegmentRegistry
 } from "../lib/api";
 
-const segments: Segment[] = ["AI_AUTOMATION", "REVOPS", "SEO", "WEBFLOW"];
 type View = "inbox" | "scoring" | "report" | "evidence" | "outcomes" | "learning" | "offers";
 
 export default function Home() {
   const [view, setView] = useState<View>("scoring");
+  const [segments, setSegments] = useState<SegmentRegistry[]>([]);
   const [prospects, setProspects] = useState<Prospect[]>([]);
   const [selectedProspectId, setSelectedProspectId] = useState("");
   const [signals, setSignals] = useState<Signal[]>([]);
@@ -94,6 +96,8 @@ export default function Home() {
   const [alphaRules, setAlphaRules] = useState<AlphaSignalRule[]>([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [filterPdmCode, setFilterPdmCode] = useState("");
+  const [filterOfferId, setFilterOfferId] = useState("");
 
   const selectedProspect = useMemo(
     () => prospects.find((prospect) => prospect.id === selectedProspectId) ?? null,
@@ -114,6 +118,19 @@ export default function Home() {
     }
   }
 
+  async function refreshSegments() {
+    setLoading(true);
+    setMessage("");
+    try {
+      const data = await listSegments();
+      setSegments(data);
+    } catch (error) {
+      setMessage(readError(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function refreshProspectIntelligence(prospectId: string) {
     if (!prospectId) return;
     const [nextSignals, scores, alphaMatches] = await Promise.all([
@@ -126,13 +143,13 @@ export default function Home() {
     setProspectAlphaSignals(alphaMatches);
   }
 
-  async function refreshReport() {
+  async function refreshReport(pdmCode = filterPdmCode, offerId = filterOfferId) {
     setLoading(true);
     setMessage("");
     try {
       const [jsonReport, markdownReport] = await Promise.all([
-        getCampaignIntelligenceReport(),
-        getCampaignIntelligenceMarkdown()
+        getCampaignIntelligenceReport(pdmCode, offerId),
+        getCampaignIntelligenceMarkdown(pdmCode, offerId)
       ]);
       setReport(jsonReport);
       setMarkdown(markdownReport);
@@ -181,13 +198,13 @@ export default function Home() {
     }
   }
 
-  async function refreshLearning() {
+  async function refreshLearning(pdmCode = filterPdmCode, offerId = filterOfferId) {
     setLoading(true);
     setMessage("");
     try {
       const [summary, reportText] = await Promise.all([
-        getLearningSummary(),
-        getLearningMarkdown()
+        getLearningSummary(pdmCode, offerId),
+        getLearningMarkdown(pdmCode, offerId)
       ]);
       setLearningSummary(summary);
       setLearningMarkdown(reportText);
@@ -230,6 +247,7 @@ export default function Home() {
   }
 
   useEffect(() => {
+    void refreshSegments();
     void refreshProspects();
     void refreshReport();
     void refreshEvidenceEntries();
@@ -246,12 +264,12 @@ export default function Home() {
   }, [selectedProspectId]);
 
   useEffect(() => {
-    if (view === "report") void refreshReport();
+    if (view === "report") void refreshReport(filterPdmCode, filterOfferId);
     if (view === "evidence") void refreshEvidenceEntries();
     if (view === "outcomes") void refreshCampaignWorkbench();
-    if (view === "learning") void refreshLearning();
+    if (view === "learning") void refreshLearning(filterPdmCode, filterOfferId);
     if (view === "offers") void refreshOffers();
-  }, [view]);
+  }, [view, filterPdmCode, filterOfferId]);
 
   useEffect(() => {
     if (selectedCampaignBatchId) void refreshCampaignWorkbench(selectedCampaignBatchId);
@@ -302,6 +320,7 @@ export default function Home() {
                 setView("scoring");
               }}
               setMessage={setMessage}
+              segments={segments}
             />
           </Panel>
 
@@ -418,7 +437,17 @@ export default function Home() {
             />
           ) : null}
           {view === "report" ? (
-            <ReportWorkspace markdown={markdown} onRefresh={refreshReport} report={report} />
+            <ReportWorkspace
+              markdown={markdown}
+              onRefresh={refreshReport}
+              report={report}
+              filterPdmCode={filterPdmCode}
+              filterOfferId={filterOfferId}
+              onPdmChange={setFilterPdmCode}
+              onOfferChange={setFilterOfferId}
+              offers={offers}
+              segments={segments}
+            />
           ) : null}
           {view === "outcomes" ? (
             <CampaignOutcomeWorkbench
@@ -441,6 +470,12 @@ export default function Home() {
               markdown={learningMarkdown}
               onRefresh={refreshLearning}
               summary={learningSummary}
+              filterPdmCode={filterPdmCode}
+              filterOfferId={filterOfferId}
+              onPdmChange={setFilterPdmCode}
+              onOfferChange={setFilterOfferId}
+              offers={offers}
+              segments={segments}
             />
           ) : null}
           {view === "evidence" ? (
@@ -825,10 +860,12 @@ function MiniList({ title, values }: { title: string; values: string[] }) {
 
 function ProspectForm({
   onCreated,
-  setMessage
+  setMessage,
+  segments
 }: {
   onCreated: (prospect: Prospect) => Promise<void>;
   setMessage: (message: string) => void;
+  segments: SegmentRegistry[];
 }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -858,8 +895,8 @@ function ProspectForm({
           Segment
         </span>
         <select className="h-9 w-full border border-[#293733] bg-[#121516] px-2 font-mono text-xs text-white" name="segment">
-          {segments.map((segment) => (
-            <option key={segment} value={segment}>{segment}</option>
+          {segments.map((seg) => (
+            <option key={seg.code} value={seg.code}>{seg.label}</option>
           ))}
         </select>
       </label>
@@ -1249,12 +1286,71 @@ function SignalSimulator() {
   );
 }
 
-function ReportWorkspace({ report, markdown, onRefresh }: { report: CampaignIntelligenceReport | null; markdown: string; onRefresh: () => Promise<void> }) {
+function ReportWorkspace({
+  report,
+  markdown,
+  onRefresh,
+  filterPdmCode,
+  filterOfferId,
+  onPdmChange,
+  onOfferChange,
+  offers,
+  segments
+}: {
+  report: CampaignIntelligenceReport | null;
+  markdown: string;
+  onRefresh: (pdmCode?: string, offerId?: string) => Promise<void>;
+  filterPdmCode: string;
+  filterOfferId: string;
+  onPdmChange: (code: string) => void;
+  onOfferChange: (id: string) => void;
+  offers: Offer[];
+  segments: SegmentRegistry[];
+}) {
+  const uniquePdms = useMemo(() => {
+    const pdms = segments.map((s) => s.pdm_code).filter(Boolean);
+    return Array.from(new Set(pdms));
+  }, [segments]);
+
   return (
     <Panel title="Campaign Intelligence Report" icon={<BarChart3 size={15} />} action="deterministic">
-      <div className="mb-4 flex justify-end">
-        <button className="inline-flex h-9 items-center gap-2 border border-[#00a9d6] bg-[#062633] px-3 font-mono text-xs uppercase text-[#00c8ff]" onClick={() => void onRefresh()} type="button">
-          <RefreshCw size={14} /> Refresh Report
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[#202c28] pb-4">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] uppercase text-[#738a94]">PDM Filter:</span>
+            <select
+              value={filterPdmCode}
+              onChange={(e) => onPdmChange(e.target.value)}
+              className="h-8 border border-[#202c28] bg-[#070b0c] px-2 font-mono text-xs text-[#b8c9d0] outline-none focus:border-[#00c8ff]"
+            >
+              <option value="">ALL PDMs</option>
+              {uniquePdms.map((pdm) => (
+                <option key={pdm} value={pdm}>
+                  {pdm}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] uppercase text-[#738a94]">Offer Filter:</span>
+            <select
+              value={filterOfferId}
+              onChange={(e) => onOfferChange(e.target.value)}
+              className="h-8 border border-[#202c28] bg-[#070b0c] px-2 font-mono text-xs text-[#b8c9d0] outline-none focus:border-[#00c8ff]"
+            >
+              <option value="">ALL Offers</option>
+              {offers.map((offer) => (
+                <option key={offer.id} value={offer.id}>
+                  {offer.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <button className="inline-flex h-8 items-center gap-2 border border-[#00a9d6] bg-[#062633] px-3 font-mono text-xs uppercase text-[#00c8ff]" onClick={() => void onRefresh(filterPdmCode, filterOfferId)} type="button">
+          <RefreshCw size={12} /> Refresh Report
         </button>
       </div>
       {report ? (
@@ -1277,17 +1373,68 @@ function ReportWorkspace({ report, markdown, onRefresh }: { report: CampaignInte
 function LearningIntelligenceWorkspace({
   summary,
   markdown,
-  onRefresh
+  onRefresh,
+  filterPdmCode,
+  filterOfferId,
+  onPdmChange,
+  onOfferChange,
+  offers,
+  segments
 }: {
   summary: LearningSummary | null;
   markdown: string;
-  onRefresh: () => Promise<void>;
+  onRefresh: (pdmCode?: string, offerId?: string) => Promise<void>;
+  filterPdmCode: string;
+  filterOfferId: string;
+  onPdmChange: (code: string) => void;
+  onOfferChange: (id: string) => void;
+  offers: Offer[];
+  segments: SegmentRegistry[];
 }) {
+  const uniquePdms = useMemo(() => {
+    const pdms = segments.map((s) => s.pdm_code).filter(Boolean);
+    return Array.from(new Set(pdms));
+  }, [segments]);
+
   return (
     <Panel title="Learning Intelligence" icon={<LineChart size={15} />} action="evidence validation">
-      <div className="mb-4 flex justify-end">
-        <button className="inline-flex h-9 items-center gap-2 border border-[#00a9d6] bg-[#062633] px-3 font-mono text-xs uppercase text-[#00c8ff]" onClick={() => void onRefresh()} type="button">
-          <RefreshCw size={14} /> Refresh Learning
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[#202c28] pb-4">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] uppercase text-[#738a94]">PDM Filter:</span>
+            <select
+              value={filterPdmCode}
+              onChange={(e) => onPdmChange(e.target.value)}
+              className="h-8 border border-[#202c28] bg-[#070b0c] px-2 font-mono text-xs text-[#b8c9d0] outline-none focus:border-[#00c8ff]"
+            >
+              <option value="">ALL PDMs</option>
+              {uniquePdms.map((pdm) => (
+                <option key={pdm} value={pdm}>
+                  {pdm}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] uppercase text-[#738a94]">Offer Filter:</span>
+            <select
+              value={filterOfferId}
+              onChange={(e) => onOfferChange(e.target.value)}
+              className="h-8 border border-[#202c28] bg-[#070b0c] px-2 font-mono text-xs text-[#b8c9d0] outline-none focus:border-[#00c8ff]"
+            >
+              <option value="">ALL Offers</option>
+              {offers.map((offer) => (
+                <option key={offer.id} value={offer.id}>
+                  {offer.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <button className="inline-flex h-8 items-center gap-2 border border-[#00a9d6] bg-[#062633] px-3 font-mono text-xs uppercase text-[#00c8ff]" onClick={() => void onRefresh(filterPdmCode, filterOfferId)} type="button">
+          <RefreshCw size={12} /> Refresh Learning
         </button>
       </div>
 

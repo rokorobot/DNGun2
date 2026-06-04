@@ -1,4 +1,13 @@
-export type Segment = "AI_AUTOMATION" | "REVOPS" | "SEO" | "WEBFLOW";
+export type Segment = string;
+
+export type SegmentRegistry = {
+  id: string;
+  code: string;
+  label: string;
+  pdm_code: string;
+  status: string;
+  created_at: string;
+};
 
 export type Prospect = {
   id: string;
@@ -313,6 +322,10 @@ export function listProspects() {
   return request<Prospect[]>("/prospects");
 }
 
+export function listSegments() {
+  return request<SegmentRegistry[]>("/segments");
+}
+
 export function createProspect(data: {
   company_name: string;
   segment: Segment;
@@ -350,8 +363,14 @@ export function listProspectScores(prospectId: string) {
   return request<ProspectScore[]>(`/prospects/${prospectId}/scores`);
 }
 
-export function getCampaignIntelligenceReport() {
-  return request<CampaignIntelligenceReport>("/reports/campaign-intelligence");
+export function getCampaignIntelligenceReport(pdmCode?: string, offerId?: string) {
+  let path = "/reports/campaign-intelligence";
+  const params = new URLSearchParams();
+  if (pdmCode) params.append("pdm_code", pdmCode);
+  if (offerId) params.append("offer_id", offerId);
+  const query = params.toString();
+  if (query) path += `?${query}`;
+  return request<CampaignIntelligenceReport>(path);
 }
 
 export function listEvidenceEntries() {
@@ -402,8 +421,14 @@ export function updateCampaignOutcome(campaignOutcomeId: string, data: CampaignO
   });
 }
 
-export function getLearningSummary() {
-  return request<LearningSummary>("/learning/summary");
+export function getLearningSummary(pdmCode?: string, offerId?: string) {
+  let path = "/learning/summary";
+  const params = new URLSearchParams();
+  if (pdmCode) params.append("pdm_code", pdmCode);
+  if (offerId) params.append("offer_id", offerId);
+  const query = params.toString();
+  if (query) path += `?${query}`;
+  return request<LearningSummary>(path);
 }
 
 export function createOffer(data: {
@@ -464,8 +489,13 @@ export function listOfferProspectFits(offerId: string) {
   return request<OfferProspectFit[]>(`/offers/${offerId}/fit/prospects`);
 }
 
-export async function getLearningMarkdown() {
-  const response = await fetch(`${API_BASE}/learning/report.md`, {
+export async function getLearningMarkdown(pdmCode?: string, offerId?: string) {
+  const params = new URLSearchParams();
+  if (pdmCode) params.append("pdm_code", pdmCode);
+  if (offerId) params.append("offer_id", offerId);
+  const query = params.toString();
+  const path = query ? `/learning/report.md?${query}` : "/learning/report.md";
+  const response = await fetch(`${API_BASE}${path}`, {
     cache: "no-store"
   });
   if (!response.ok) {
@@ -482,8 +512,13 @@ export function listProspectAlphaSignals(prospectId: string) {
   return request<ProspectAlphaSignal[]>(`/prospects/${prospectId}/alpha-signals`);
 }
 
-export async function getCampaignIntelligenceMarkdown() {
-  const response = await fetch(`${API_BASE}/reports/campaign-intelligence.md`, {
+export async function getCampaignIntelligenceMarkdown(pdmCode?: string, offerId?: string) {
+  const params = new URLSearchParams();
+  if (pdmCode) params.append("pdm_code", pdmCode);
+  if (offerId) params.append("offer_id", offerId);
+  const query = params.toString();
+  const path = query ? `/reports/campaign-intelligence.md?${query}` : "/reports/campaign-intelligence.md";
+  const response = await fetch(`${API_BASE}${path}`, {
     cache: "no-store"
   });
   if (!response.ok) {

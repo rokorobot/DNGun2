@@ -74,6 +74,27 @@ def test_disqualifier_overrides_decision(tmp_path):
     assert fit["total_fit_score"] == 0
 
 
+def test_registered_disqualifier_without_substring_overrides_decision(tmp_path):
+    client = TestClient(create_app(tmp_path / "fit.sqlite3"))
+    offer = _approved_robotics_offer(client)
+    prospect = client.post(
+        "/prospects",
+        json={"company_name": "Low Value Robotics", "segment": "AI_AUTOMATION"},
+    ).json()
+    # "Low client value" is a registered disqualifier in disqualifiers.yaml
+    client.post(
+        f"/prospects/{prospect['id']}/signals",
+        json={"signal_type": "Low client value", "tier": 1, "score": 5},
+    )
+
+    fit = client.post(f"/offers/{offer['id']}/fit/prospects").json()[0]
+
+    assert fit["decision"] == "DISQUALIFIED"
+    assert fit["total_fit_score"] == 0
+    assert "Disqualified: Expected client value is too low for pilot economics." in fit["explanation"][0]
+
+
+
 def test_get_returns_ranked_fits(tmp_path):
     client = TestClient(create_app(tmp_path / "fit.sqlite3"))
     offer = _approved_robotics_offer(client)

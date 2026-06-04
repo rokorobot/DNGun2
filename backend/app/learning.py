@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import models
@@ -15,10 +16,50 @@ from .schemas import (
 )
 
 
-def calculate_signal_performance(session: Session) -> list[SignalPerformanceRead]:
-    outcomes = _latest_outcomes_by_prospect(session)
+def _scoped_prospect_ids(
+    session: Session, pdm_code: str | None = None, offer_id: str | None = None
+) -> set[str] | None:
+    if not pdm_code and not offer_id:
+        return None
+
+    statement = select(models.ProspectModel.id)
+    if pdm_code:
+        segment_codes = session.scalars(
+            select(models.SegmentRegistryModel.code).where(models.SegmentRegistryModel.pdm_code == pdm_code)
+        ).all()
+        statement = statement.where(models.ProspectModel.segment.in_(segment_codes))
+    elif offer_id:
+        statement = statement.where(
+            models.ProspectModel.id.in_(
+                select(models.OfferProspectFitModel.prospect_id).where(models.OfferProspectFitModel.offer_id == offer_id)
+            )
+        )
+    return set(session.scalars(statement).all())
+
+
+def _wilson_score(positives: int, total: int, confidence: float = 0.95) -> float:
+    if total <= 0:
+        return 0.0
+    z = 1.96
+    phat = positives / total
+    numerator = phat + (z * z) / (2 * total) - z * math.sqrt(
+        max(0.0, (phat * (1 - phat) + (z * z) / (4 * total)) / total)
+    )
+    denominator = 1 + (z * z) / total
+    return round(max(0.0, numerator / denominator), 4)
+
+
+def calculate_signal_performance(
+    session: Session, pdm_code: str | None = None, offer_id: str | None = None
+) -> list[SignalPerformanceRead]:
+    scoped_ids = _scoped_prospect_ids(session, pdm_code, offer_id)
+    outcomes = _latest_outcomes_by_prospect(session, pdm_code=pdm_code, offer_id=offer_id)
     signal_prospects: dict[str, set[str]] = defaultdict(set)
-    signals = session.scalars(select(models.SignalModel)).all()
+
+    statement = select(models.SignalModel)
+    if scoped_ids is not None:
+        statement = statement.where(models.SignalModel.prospect_id.in_(scoped_ids))
+    signals = session.scalars(statement).all()
     for signal in signals:
         signal_prospects[signal.signal_type].add(signal.prospect_id)
 
@@ -26,13 +67,20 @@ def calculate_signal_performance(session: Session) -> list[SignalPerformanceRead
         _signal_row(signal_type, prospect_ids, outcomes)
         for signal_type, prospect_ids in signal_prospects.items()
     ]
-    return sorted(rows, key=lambda row: (row.pilotRate, row.replyRate, row.timesSeen), reverse=True)
+    return sorted(rows, key=lambda row: (row.confidenceRank, row.pilotRate, row.replyRate, row.timesSeen), reverse=True)
 
 
-def calculate_alpha_signal_performance(session: Session) -> list[AlphaSignalPerformanceRead]:
-    outcomes = _latest_outcomes_by_prospect(session)
+def calculate_alpha_signal_performance(
+    session: Session, pdm_code: str | None = None, offer_id: str | None = None
+) -> list[AlphaSignalPerformanceRead]:
+    scoped_ids = _scoped_prospect_ids(session, pdm_code, offer_id)
+    outcomes = _latest_outcomes_by_prospect(session, pdm_code=pdm_code, offer_id=offer_id)
     alpha_prospects: dict[tuple[str, str], set[str]] = defaultdict(set)
-    links = session.scalars(select(models.ProspectAlphaSignalModel)).all()
+
+    statement = select(models.ProspectAlphaSignalModel)
+    if scoped_ids is not None:
+        statement = statement.where(models.ProspectAlphaSignalModel.prospect_id.in_(scoped_ids))
+    links = session.scalars(statement).all()
     for link in links:
         alpha_prospects[(link.alpha_signal.code, link.alpha_signal.name)].add(link.prospect_id)
 
@@ -40,15 +88,18 @@ def calculate_alpha_signal_performance(session: Session) -> list[AlphaSignalPerf
         _alpha_row(code, name, prospect_ids, outcomes)
         for (code, name), prospect_ids in alpha_prospects.items()
     ]
-    return sorted(rows, key=lambda row: (row.pilotRate, row.replyRate, row.timesMatched), reverse=True)
+    return sorted(rows, key=lambda row: (row.confidenceRank, row.pilotRate, row.replyRate, row.timesMatched), reverse=True)
 
 
 def calculate_score_band_validation(
-    session: Session, rules: RuleRegistry | None = None
+    session: Session,
+    rules: RuleRegistry | None = None,
+    pdm_code: str | None = None,
+    offer_id: str | None = None,
 ) -> list[ScoreBandValidationRead]:
     rules = rules or RuleRegistry()
-    outcomes = _latest_outcomes_by_prospect(session)
-    latest_scores = _latest_scores_by_prospect(session)
+    outcomes = _latest_outcomes_by_prospect(session, pdm_code=pdm_code, offer_id=offer_id)
+    latest_scores = _latest_scores_by_prospect(session, pdm_code=pdm_code, offer_id=offer_id)
     band_prospects: dict[str, set[str]] = {
         band["code"]: set() for band in rules.score_bands()
     }
@@ -61,10 +112,12 @@ def calculate_score_band_validation(
     ]
 
 
-def calculate_learning_summary(session: Session) -> LearningSummaryRead:
-    signals = calculate_signal_performance(session)
-    alpha_signals = calculate_alpha_signal_performance(session)
-    score_bands = calculate_score_band_validation(session)
+def calculate_learning_summary(
+    session: Session, pdm_code: str | None = None, offer_id: str | None = None
+) -> LearningSummaryRead:
+    signals = calculate_signal_performance(session, pdm_code=pdm_code, offer_id=offer_id)
+    alpha_signals = calculate_alpha_signal_performance(session, pdm_code=pdm_code, offer_id=offer_id)
+    score_bands = calculate_score_band_validation(session, pdm_code=pdm_code, offer_id=offer_id)
 
     top_signals = [
         signal
@@ -131,29 +184,75 @@ def render_learning_markdown(summary: LearningSummaryRead) -> str:
 
 
 def _latest_outcomes_by_prospect(
-    session: Session,
+    session: Session, pdm_code: str | None = None, offer_id: str | None = None
 ) -> dict[str, models.CampaignOutcomeModel]:
-    outcomes = session.scalars(
-        select(models.CampaignOutcomeModel).order_by(
-            models.CampaignOutcomeModel.recorded_at.asc()
+    inner_stmt = select(
+        models.CampaignOutcomeModel.id.label("id"),
+        models.CampaignOutcomeModel.prospect_id.label("prospect_id"),
+        func.row_number().over(
+            partition_by=models.CampaignOutcomeModel.prospect_id,
+            order_by=models.CampaignOutcomeModel.recorded_at.desc()
+        ).label("rn")
+    )
+
+    if pdm_code:
+        segment_codes = session.scalars(
+            select(models.SegmentRegistryModel.code).where(models.SegmentRegistryModel.pdm_code == pdm_code)
+        ).all()
+        inner_stmt = inner_stmt.join(
+            models.ProspectModel, models.ProspectModel.id == models.CampaignOutcomeModel.prospect_id
+        ).where(models.ProspectModel.segment.in_(segment_codes))
+    elif offer_id:
+        inner_stmt = inner_stmt.where(
+            models.CampaignOutcomeModel.prospect_id.in_(
+                select(models.OfferProspectFitModel.prospect_id).where(models.OfferProspectFitModel.offer_id == offer_id)
+            )
         )
-    ).all()
-    latest: dict[str, models.CampaignOutcomeModel] = {}
-    for outcome in outcomes:
-        latest[outcome.prospect_id] = outcome
-    return latest
+
+    subq = inner_stmt.subquery()
+
+    stmt = select(models.CampaignOutcomeModel).join(
+        subq, models.CampaignOutcomeModel.id == subq.c.id
+    ).where(subq.c.rn == 1)
+
+    rows = session.scalars(stmt).all()
+    return {row.prospect_id: row for row in rows}
 
 
-def _latest_scores_by_prospect(session: Session) -> dict[str, models.ProspectScoreModel]:
-    scores = session.scalars(
-        select(models.ProspectScoreModel).order_by(
-            models.ProspectScoreModel.calculated_at.asc()
+def _latest_scores_by_prospect(
+    session: Session, pdm_code: str | None = None, offer_id: str | None = None
+) -> dict[str, models.ProspectScoreModel]:
+    inner_stmt = select(
+        models.ProspectScoreModel.id.label("id"),
+        models.ProspectScoreModel.prospect_id.label("prospect_id"),
+        func.row_number().over(
+            partition_by=models.ProspectScoreModel.prospect_id,
+            order_by=models.ProspectScoreModel.calculated_at.desc()
+        ).label("rn")
+    )
+
+    if pdm_code:
+        segment_codes = session.scalars(
+            select(models.SegmentRegistryModel.code).where(models.SegmentRegistryModel.pdm_code == pdm_code)
+        ).all()
+        inner_stmt = inner_stmt.join(
+            models.ProspectModel, models.ProspectModel.id == models.ProspectScoreModel.prospect_id
+        ).where(models.ProspectModel.segment.in_(segment_codes))
+    elif offer_id:
+        inner_stmt = inner_stmt.where(
+            models.ProspectScoreModel.prospect_id.in_(
+                select(models.OfferProspectFitModel.prospect_id).where(models.OfferProspectFitModel.offer_id == offer_id)
+            )
         )
-    ).all()
-    latest: dict[str, models.ProspectScoreModel] = {}
-    for score in scores:
-        latest[score.prospect_id] = score
-    return latest
+
+    subq = inner_stmt.subquery()
+
+    stmt = select(models.ProspectScoreModel).join(
+        subq, models.ProspectScoreModel.id == subq.c.id
+    ).where(subq.c.rn == 1)
+
+    rows = session.scalars(stmt).all()
+    return {row.prospect_id: row for row in rows}
 
 
 def _signal_row(
@@ -163,11 +262,27 @@ def _signal_row(
 ) -> SignalPerformanceRead:
     metrics = _metrics(prospect_ids, outcomes)
     contacted = int(metrics["contacted"])
+    replied = int(metrics["replied"])
+    call_booked = int(metrics["callBooked"])
+    proposal_requested = int(metrics["proposalRequested"])
+    paid_pilot = int(metrics["paidPilot"])
+
+    reply_rank = _wilson_score(replied, contacted)
+    call_rank = _wilson_score(call_booked, contacted)
+    proposal_rank = _wilson_score(proposal_requested, contacted)
+    pilot_rank = _wilson_score(paid_pilot, contacted)
+    conf_rank = round(pilot_rank + 0.1 * reply_rank, 4)
+
     return SignalPerformanceRead(
         signalType=signal_type,
         timesSeen=len(prospect_ids),
         confidence=_confidence(contacted),
         recommendation=_signal_recommendation(contacted, metrics),
+        replyRateRank=reply_rank,
+        callRateRank=call_rank,
+        proposalRateRank=proposal_rank,
+        pilotRateRank=pilot_rank,
+        confidenceRank=conf_rank,
         **metrics,
     )
 
@@ -180,12 +295,28 @@ def _alpha_row(
 ) -> AlphaSignalPerformanceRead:
     metrics = _metrics(prospect_ids, outcomes)
     contacted = int(metrics["contacted"])
+    replied = int(metrics["replied"])
+    call_booked = int(metrics["callBooked"])
+    proposal_requested = int(metrics["proposalRequested"])
+    paid_pilot = int(metrics["paidPilot"])
+
+    reply_rank = _wilson_score(replied, contacted)
+    call_rank = _wilson_score(call_booked, contacted)
+    proposal_rank = _wilson_score(proposal_requested, contacted)
+    pilot_rank = _wilson_score(paid_pilot, contacted)
+    conf_rank = round(pilot_rank + 0.1 * reply_rank, 4)
+
     return AlphaSignalPerformanceRead(
         code=code,
         name=name,
         timesMatched=len(prospect_ids),
         confidence=_confidence(contacted),
         recommendation=_alpha_recommendation(contacted, metrics),
+        replyRateRank=reply_rank,
+        callRateRank=call_rank,
+        proposalRateRank=proposal_rank,
+        pilotRateRank=pilot_rank,
+        confidenceRank=conf_rank,
         **metrics,
     )
 
@@ -197,11 +328,27 @@ def _score_band_row(
 ) -> ScoreBandValidationRead:
     metrics = _metrics(prospect_ids, outcomes)
     contacted = int(metrics["contacted"])
+    replied = int(metrics["replied"])
+    call_booked = int(metrics["callBooked"])
+    proposal_requested = int(metrics["proposalRequested"])
+    paid_pilot = int(metrics["paidPilot"])
+
+    reply_rank = _wilson_score(replied, contacted)
+    call_rank = _wilson_score(call_booked, contacted)
+    proposal_rank = _wilson_score(proposal_requested, contacted)
+    pilot_rank = _wilson_score(paid_pilot, contacted)
+    conf_rank = round(pilot_rank + 0.1 * reply_rank, 4)
+
     return ScoreBandValidationRead(
         scoreBand=score_band,
         prospectsInBand=len(prospect_ids),
         confidence=_confidence(contacted),
         recommendation=_score_band_recommendation(score_band, metrics),
+        replyRateRank=reply_rank,
+        callRateRank=call_rank,
+        proposalRateRank=proposal_rank,
+        pilotRateRank=pilot_rank,
+        confidenceRank=conf_rank,
         **metrics,
     )
 
@@ -250,14 +397,18 @@ def _signal_recommendation(contacted: int, metrics: dict[str, int | float]) -> s
     pilot_rate = float(metrics["pilotRate"])
     if contacted < 5:
         return "COLLECT_MORE_DATA"
+
+    # High-volume low-performance checks
     if contacted >= 20 and pilot_rate == 0 and reply_rate < 0.10:
         return "RETIRE_OR_REVIEW"
+    if contacted >= 10 and reply_rate < 0.05:
+        return "DECREASE_WEIGHT"
+
+    # High-performance checks
     if pilot_rate >= 0.10 and contacted >= 10:
         return "INCREASE_WEIGHT"
     if reply_rate >= 0.30 and call_rate >= 0.15:
         return "KEEP"
-    if contacted >= 10 and reply_rate < 0.05:
-        return "DECREASE_WEIGHT"
     return "COLLECT_MORE_DATA"
 
 
@@ -267,14 +418,19 @@ def _alpha_recommendation(contacted: int, metrics: dict[str, int | float]) -> st
     pilot_rate = float(metrics["pilotRate"])
     if contacted < 5:
         return "COLLECT_MORE_DATA"
+
+    # High-performance validation
     if pilot_rate >= 0.10 and contacted >= 10:
         return "VALIDATE"
+
+    # High-volume low-performance checks
     if contacted >= 20 and paid_pilot == 0:
         return "REVIEW_BONUS"
-    if reply_rate >= 0.30 and pilot_rate < 0.05:
-        return "GOOD_ATTENTION_SIGNAL_BAD_BUYER_SIGNAL"
     if contacted >= 15 and reply_rate < 0.10:
         return "WEAK_ALPHA_SIGNAL"
+
+    if reply_rate >= 0.30 and pilot_rate < 0.05:
+        return "GOOD_ATTENTION_SIGNAL_BAD_BUYER_SIGNAL"
     return "COLLECT_MORE_DATA"
 
 

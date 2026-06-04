@@ -38,4 +38,21 @@ def create_session_factory(db_path: Path | None = None) -> sessionmaker[Session]
         connect_args={"check_same_thread": False},
     )
     Base.metadata.create_all(bind=engine)
+    
+    # Dynamically resolve and run migrate_db migrations
+    try:
+        from scripts.migrate_db import migrate as run_migrations
+        run_migrations(db_path)
+    except ImportError:
+        try:
+            from backend.scripts.migrate_db import migrate as run_migrations
+            run_migrations(db_path)
+        except ImportError:
+            import sys
+            backend_dir = Path(__file__).resolve().parents[1]
+            if str(backend_dir) not in sys.path:
+                sys.path.insert(0, str(backend_dir))
+            from scripts.migrate_db import migrate as run_migrations
+            run_migrations(db_path)
+
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)

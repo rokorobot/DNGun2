@@ -55,6 +55,8 @@ from .schemas import (
     SignalCreate,
     AlphaSignalPerformanceRead,
     SignalPerformanceRead,
+    SegmentRegistry,
+    SegmentRegistryCreate,
 )
 from .scoring_engine import ScoringEngine
 
@@ -97,12 +99,31 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     def get_disqualifiers() -> list[dict]:
         return load_rules().disqualifiers()
 
+    @app.post("/segments", response_model=SegmentRegistry, status_code=201)
+    def create_segment(
+        data: SegmentRegistryCreate,
+        repository: Repository = Depends(get_repository),
+    ) -> SegmentRegistry:
+        try:
+            return repository.create_segment_registry_entry(data)
+        except RepositoryConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.get("/segments", response_model=list[SegmentRegistry])
+    def list_segments(
+        repository: Repository = Depends(get_repository),
+    ) -> list[SegmentRegistry]:
+        return repository.list_segments()
+
     @app.post("/prospects", response_model=Prospect, status_code=201)
     def create_prospect(
         data: ProspectCreate,
         repository: Repository = Depends(get_repository),
     ) -> Prospect:
-        return repository.create_prospect(data)
+        try:
+            return repository.create_prospect(data)
+        except RepositoryConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.get("/prospects", response_model=list[Prospect])
     def list_prospects(repository: Repository = Depends(get_repository)) -> list[Prospect]:
@@ -312,9 +333,11 @@ def create_app(db_path: Path | None = None) -> FastAPI:
 
     @app.get("/evidence-entries", response_model=list[EvidenceEntry])
     def list_evidence_entries(
+        pdm_code: str | None = Query(default=None),
+        offer_id: str | None = Query(default=None),
         repository: Repository = Depends(get_repository),
     ) -> list[EvidenceEntry]:
-        return repository.list_evidence_entries()
+        return repository.list_evidence_entries(pdm_code=pdm_code, offer_id=offer_id)
 
     @app.post("/confidence-updates", response_model=ConfidenceUpdate, status_code=201)
     def create_confidence_update(
@@ -327,46 +350,60 @@ def create_app(db_path: Path | None = None) -> FastAPI:
 
     @app.get("/confidence-updates", response_model=list[ConfidenceUpdate])
     def list_confidence_updates(
+        pdm_code: str | None = Query(default=None),
+        offer_id: str | None = Query(default=None),
         repository: Repository = Depends(get_repository),
     ) -> list[ConfidenceUpdate]:
-        return repository.list_confidence_updates()
+        return repository.list_confidence_updates(pdm_code=pdm_code, offer_id=offer_id)
 
     @app.get("/reports/campaign-intelligence", response_model=CampaignIntelligenceReport)
     def get_campaign_intelligence_report(
+        pdm_code: str | None = Query(default=None),
+        offer_id: str | None = Query(default=None),
         session: Session = Depends(get_session),
     ) -> CampaignIntelligenceReport:
-        return build_campaign_intelligence_report(session)
+        return build_campaign_intelligence_report(session, pdm_code=pdm_code, offer_id=offer_id)
 
     @app.get("/reports/campaign-intelligence.md", response_class=PlainTextResponse)
     def export_campaign_intelligence_report(
+        pdm_code: str | None = Query(default=None),
+        offer_id: str | None = Query(default=None),
         session: Session = Depends(get_session),
     ) -> str:
-        report = build_campaign_intelligence_report(session)
+        report = build_campaign_intelligence_report(session, pdm_code=pdm_code, offer_id=offer_id)
         return render_campaign_intelligence_markdown(report)
 
     @app.get("/learning/signals", response_model=list[SignalPerformanceRead])
     def get_signal_learning(
+        pdm_code: str | None = Query(default=None),
+        offer_id: str | None = Query(default=None),
         session: Session = Depends(get_session),
     ) -> list[SignalPerformanceRead]:
-        return calculate_signal_performance(session)
+        return calculate_signal_performance(session, pdm_code=pdm_code, offer_id=offer_id)
 
     @app.get("/learning/alpha-signals", response_model=list[AlphaSignalPerformanceRead])
     def get_alpha_signal_learning(
+        pdm_code: str | None = Query(default=None),
+        offer_id: str | None = Query(default=None),
         session: Session = Depends(get_session),
     ) -> list[AlphaSignalPerformanceRead]:
-        return calculate_alpha_signal_performance(session)
+        return calculate_alpha_signal_performance(session, pdm_code=pdm_code, offer_id=offer_id)
 
     @app.get("/learning/summary", response_model=LearningSummaryRead)
     def get_learning_summary(
+        pdm_code: str | None = Query(default=None),
+        offer_id: str | None = Query(default=None),
         session: Session = Depends(get_session),
     ) -> LearningSummaryRead:
-        return calculate_learning_summary(session)
+        return calculate_learning_summary(session, pdm_code=pdm_code, offer_id=offer_id)
 
     @app.get("/learning/report.md", response_class=PlainTextResponse)
     def export_learning_report(
+        pdm_code: str | None = Query(default=None),
+        offer_id: str | None = Query(default=None),
         session: Session = Depends(get_session),
     ) -> str:
-        return render_learning_markdown(calculate_learning_summary(session))
+        return render_learning_markdown(calculate_learning_summary(session, pdm_code=pdm_code, offer_id=offer_id))
 
     @app.post("/offers", response_model=Offer, status_code=201)
     def create_offer(
@@ -507,11 +544,13 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         profile = repository.get_offer_intelligence_profile(offer_id)
         if profile is None:
             raise HTTPException(status_code=409, detail="Approved offer profile required")
+        rules = load_rules()
         fits = [
             calculate_offer_prospect_fit(
                 offer_profile=profile,
                 prospect=prospect,
                 signals=repository.list_signals(prospect.id),
+                rules=rules,
             )
             for prospect in repository.list_prospects()
         ]

@@ -203,6 +203,15 @@ class EvidenceEntryModel(Base):
     evidence: Mapped[str] = mapped_column(Text, nullable=False)
     impact: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str | None] = mapped_column(String)
+    pdm_code: Mapped[str | None] = mapped_column(String)
+    offer_id: Mapped[str | None] = mapped_column(
+        ForeignKey("offers.id", ondelete="SET NULL")
+    )
+    campaign_batch_id: Mapped[str | None] = mapped_column(
+        ForeignKey("campaign_batches.id", ondelete="SET NULL")
+    )
+    signal_code: Mapped[str | None] = mapped_column(String)
+    alpha_signal_code: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
@@ -217,6 +226,15 @@ class ConfidenceUpdateModel(Base):
     evidence_impact: Mapped[float] = mapped_column(Float, nullable=False)
     confidence_after: Mapped[float] = mapped_column(Float, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+    pdm_code: Mapped[str | None] = mapped_column(String)
+    offer_id: Mapped[str | None] = mapped_column(
+        ForeignKey("offers.id", ondelete="SET NULL")
+    )
+    campaign_batch_id: Mapped[str | None] = mapped_column(
+        ForeignKey("campaign_batches.id", ondelete="SET NULL")
+    )
+    signal_code: Mapped[str | None] = mapped_column(String)
+    alpha_signal_code: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
     evidence_entry: Mapped[EvidenceEntryModel | None] = relationship()
@@ -358,3 +376,15 @@ class OfferProspectFitModel(Base):
 
     offer: Mapped[OfferModel] = relationship()
     prospect: Mapped[ProspectModel] = relationship()
+
+
+class SegmentRegistryModel(Base):
+    __tablename__ = "segments"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    pdm_code: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ACTIVE")
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+

@@ -128,3 +128,50 @@ def test_alpha_signal_definitions_can_be_seeded_from_rules(tmp_path):
 
 def write_rule_file(directory: Path, filename: str, content: str) -> None:
     (directory / filename).write_text(content, encoding="utf-8")
+
+
+def test_segment_registry_endpoints(tmp_path):
+    client = TestClient(create_app(tmp_path / "segments_test.sqlite3"))
+
+    # Verify standard pre-seeded segments are present
+    response = client.get("/segments")
+    assert response.status_code == 200
+    segments = response.json()
+    codes = {seg["code"] for seg in segments}
+    assert "AI_AUTOMATION" in codes
+    assert "ROBOTICS" in codes
+
+    # Create new dynamic segment
+    new_seg = client.post(
+        "/segments",
+        json={
+            "code": "HEALTH_TECH",
+            "label": "Health Tech",
+            "pdm_code": "HEALTH-TECH",
+        },
+    )
+    assert new_seg.status_code == 201
+    assert new_seg.json()["code"] == "HEALTH_TECH"
+
+    # Create prospect using the new segment
+    prospect = client.post(
+        "/prospects",
+        json={
+            "company_name": "HealthCorp",
+            "segment": "HEALTH_TECH",
+        },
+    )
+    assert prospect.status_code == 201
+    assert prospect.json()["segment"] == "HEALTH_TECH"
+
+    # Verify that trying to use an unregistered segment fails
+    invalid_prospect = client.post(
+        "/prospects",
+        json={
+            "company_name": "InvalidCorp",
+            "segment": "UNREGISTERED_SEGMENT",
+        },
+    )
+    assert invalid_prospect.status_code == 409
+    assert "not registered" in invalid_prospect.json()["detail"]
+

@@ -85,7 +85,7 @@ class ApiModel(BaseModel):
 class ProspectCreate(BaseModel):
     company_name: str = Field(min_length=1)
     website: str | None = None
-    segment: Segment
+    segment: str
     founder_name: str | None = None
     founder_linkedin: str | None = None
     team_size: int | None = Field(default=None, ge=0)
@@ -177,7 +177,7 @@ class ProspectScoreRead(ApiModel, ProspectScore):
 
 class CampaignBatchCreate(BaseModel):
     name: str = Field(min_length=1)
-    segment: Segment | None = None
+    segment: str | None = None
     status: CampaignBatchStatus = CampaignBatchStatus.DRAFT
     notes: str | None = None
 
@@ -217,6 +217,11 @@ class EvidenceEntryCreate(BaseModel):
     evidence: str = Field(min_length=1)
     impact: int
     source: str | None = None
+    pdm_code: str | None = None
+    offer_id: str | None = None
+    campaign_batch_id: str | None = None
+    signal_code: str | None = None
+    alpha_signal_code: str | None = None
 
 
 class EvidenceEntry(ApiModel, EvidenceEntryCreate):
@@ -230,6 +235,11 @@ class ConfidenceUpdateCreate(BaseModel):
     evidence_impact: float
     confidence_after: float = Field(ge=0, le=100)
     reason: str = Field(min_length=1)
+    pdm_code: str | None = None
+    offer_id: str | None = None
+    campaign_batch_id: str | None = None
+    signal_code: str | None = None
+    alpha_signal_code: str | None = None
 
 
 class ConfidenceUpdate(ApiModel, ConfidenceUpdateCreate):
@@ -277,6 +287,11 @@ class SignalPerformanceRead(BaseModel):
     callRate: float
     proposalRate: float
     pilotRate: float
+    replyRateRank: float = 0.0
+    callRateRank: float = 0.0
+    proposalRateRank: float = 0.0
+    pilotRateRank: float = 0.0
+    confidenceRank: float = 0.0
     confidence: str
     recommendation: str
 
@@ -294,6 +309,11 @@ class AlphaSignalPerformanceRead(BaseModel):
     callRate: float
     proposalRate: float
     pilotRate: float
+    replyRateRank: float = 0.0
+    callRateRank: float = 0.0
+    proposalRateRank: float = 0.0
+    pilotRateRank: float = 0.0
+    confidenceRank: float = 0.0
     confidence: str
     recommendation: str
 
@@ -310,6 +330,11 @@ class ScoreBandValidationRead(BaseModel):
     callRate: float
     proposalRate: float
     pilotRate: float
+    replyRateRank: float = 0.0
+    callRateRank: float = 0.0
+    proposalRateRank: float = 0.0
+    pilotRateRank: float = 0.0
+    confidenceRank: float = 0.0
     confidence: str
     recommendation: str
 
@@ -421,3 +446,16 @@ class OfferProspectFit(BaseModel):
     decision: OfferFitDecision
     explanation: list[str]
     created_at: str
+
+
+class SegmentRegistryCreate(BaseModel):
+    code: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    pdm_code: str = Field(min_length=1)
+    status: str = "ACTIVE"
+
+
+class SegmentRegistry(ApiModel, SegmentRegistryCreate):
+    id: str
+    created_at: str
+

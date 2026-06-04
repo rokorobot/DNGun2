@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import traceback
 import urllib.error
 import urllib.request
 
@@ -12,11 +14,12 @@ DEFAULT_MODEL = "gpt-4.1-mini"
 def generate_llm_offer_evaluation(domain_name: str) -> dict | None:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
+        sys.stderr.write("OPENAI_API_KEY environment variable not set. Skipping LLM evaluation.\n")
         return None
 
     body = {
         "model": os.environ.get("DNGUN_OFFER_LLM_MODEL", DEFAULT_MODEL),
-        "input": [
+        "messages": [
             {
                 "role": "system",
                 "content": (
@@ -29,9 +32,9 @@ def generate_llm_offer_evaluation(domain_name: str) -> dict | None:
             },
             {"role": "user", "content": _prompt(domain_name)},
         ],
-        "text": {
-            "format": {
-                "type": "json_schema",
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
                 "name": "offer_evaluation",
                 "schema": _schema(),
                 "strict": True,
@@ -39,7 +42,7 @@ def generate_llm_offer_evaluation(domain_name: str) -> dict | None:
         },
     }
     request = urllib.request.Request(
-        "https://api.openai.com/v1/responses",
+        "https://api.openai.com/v1/chat/completions",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -50,25 +53,28 @@ def generate_llm_offer_evaluation(domain_name: str) -> dict | None:
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except (OSError, urllib.error.URLError, json.JSONDecodeError):
+    except Exception as e:
+        sys.stderr.write(f"HTTP request or connection failed during LLM evaluation of {domain_name}:\n")
+        traceback.print_exc(file=sys.stderr)
         return None
+
     text = _extract_text(payload)
     if not text:
+        sys.stderr.write(f"No response text extracted from LLM payload: {json.dumps(payload)}\n")
         return None
     try:
         return json.loads(text)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        sys.stderr.write(f"JSON decode failed for assistant content '{text}':\n")
+        traceback.print_exc(file=sys.stderr)
         return None
 
 
 def _extract_text(payload: dict) -> str | None:
-    if payload.get("output_text"):
-        return payload["output_text"]
-    for item in payload.get("output", []):
-        for content in item.get("content", []):
-            if content.get("type") in {"output_text", "text"} and content.get("text"):
-                return content["text"]
-    return None
+    try:
+        return payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return None
 
 
 def _prompt(domain_name: str) -> str:

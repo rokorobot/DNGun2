@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from .rules import RuleRegistry
 from .schemas import OfferFitDecision, OfferIntelligenceProfile, OfferProspectFit, Prospect, Signal, utc_now_iso
 
 
@@ -9,9 +10,14 @@ def calculate_offer_prospect_fit(
     offer_profile: OfferIntelligenceProfile,
     prospect: Prospect,
     signals: list[Signal],
+    rules: RuleRegistry | None = None,
 ) -> OfferProspectFit:
+    rules = rules or RuleRegistry()
     explanations: list[str] = []
-    if _has_disqualifier(signals):
+    
+    disqualifier = rules.matching_disqualifier([sig.signal_type for sig in signals])
+    if disqualifier or _has_disqualifier(signals):
+        reason = disqualifier["reason"] if disqualifier else "Prospect has a disqualifier signal; offer fit overridden."
         return OfferProspectFit(
             id="",
             offer_id=offer_profile.offer.id,
@@ -21,7 +27,7 @@ def calculate_offer_prospect_fit(
             signal_fit_score=0,
             total_fit_score=0,
             decision=OfferFitDecision.DISQUALIFIED,
-            explanation=["Prospect has a disqualifier signal; offer fit overridden."],
+            explanation=[f"Disqualified: {reason}"],
             created_at=utc_now_iso(),
         )
 

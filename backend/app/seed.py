@@ -14,6 +14,7 @@ from .schemas import (
     ProspectCreate,
     Segment,
     SignalCreate,
+    SegmentRegistryCreate,
 )
 from .scoring_engine import ScoringEngine
 
@@ -21,6 +22,25 @@ from .scoring_engine import ScoringEngine
 def seed_mvp0(session: Session) -> dict[str, int | str]:
     repository = Repository(session)
     rules = RuleRegistry()
+
+    # Seed Dynamic Segments
+    standard_segments = [
+        ("AI_AUTOMATION", "AI Automation", "AI-AUTOMATION"),
+        ("REVOPS", "RevOps", "REVOPS"),
+        ("SEO", "SEO", "SEO"),
+        ("WEBFLOW", "Webflow", "WEBFLOW"),
+        ("ROBOTICS", "Robotics", "ROBOTICS"),
+        ("HUMANOIDS", "Humanoids", "HUMANOIDS"),
+        ("AUTOMATION", "Automation", "AUTOMATION"),
+        ("WEB3", "Web3", "WEB3"),
+        ("CREATOR_TOOLS", "Creator Tools", "CREATOR-TOOLS"),
+        ("FINTECH", "Fintech", "FINTECH"),
+    ]
+    for code, label, pdm_code in standard_segments:
+        if not repository.get_segment_by_code(code):
+            repository.create_segment_registry_entry(
+                SegmentRegistryCreate(code=code, label=label, pdm_code=pdm_code)
+            )
 
     alpha_signals = {}
     for rule in rules.alpha_signals():
