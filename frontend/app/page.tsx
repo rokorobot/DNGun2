@@ -364,7 +364,7 @@ export default function Home() {
                   </div>
                   <div className="mt-2 font-mono text-[11px] text-[#71827a]">{prospect.id}</div>
                   <div className="mt-2 text-xs text-[#9aa8a1]">
-                    {prospect.founder_name || "No founder"} · {prospect.status}
+                    {prospect.status}
                   </div>
                 </button>
               ))}
@@ -895,9 +895,7 @@ function ProspectForm({
       const prospect = await createProspect({
         company_name: String(form.get("company_name") || ""),
         segment: String(form.get("segment") || "AI_AUTOMATION") as Segment,
-        website: optionalString(form.get("website")),
-        founder_name: optionalString(form.get("founder_name")),
-        contact_path: optionalString(form.get("contact_path"))
+        website: optionalString(form.get("website"))
       });
       event.currentTarget.reset();
       await onCreated(prospect);
@@ -920,8 +918,6 @@ function ProspectForm({
           ))}
         </select>
       </label>
-      <ConsoleField label="Founder" name="founder_name" />
-      <ConsoleField label="Contact Path" name="contact_path" />
       <button className="inline-flex h-9 w-full items-center justify-center gap-2 border border-[#00b86b] bg-[#07351f] font-mono text-xs uppercase text-[#00e084]" type="submit">
         <Save size={14} /> Save Prospect
       </button>
@@ -938,7 +934,6 @@ function InboxOverview({ prospects }: { prospects: Prospect[] }) {
             <tr>
               <Th>Company</Th>
               <Th>Segment</Th>
-              <Th>Founder</Th>
               <Th>Status</Th>
               <Th>ID</Th>
             </tr>
@@ -948,7 +943,6 @@ function InboxOverview({ prospects }: { prospects: Prospect[] }) {
               <tr key={prospect.id}>
                 <Td>{prospect.company_name}</Td>
                 <Td>{prospect.segment}</Td>
-                <Td>{prospect.founder_name || "—"}</Td>
                 <Td>{prospect.status}</Td>
                 <Td mono>{prospect.id}</Td>
               </tr>
@@ -1726,10 +1720,8 @@ function IntelligenceBrief({
           <Metric label="Decision" value={decision} tone={decisionTone} />
         </div>
 
-        <div className="grid gap-3 md:grid-cols-3">
-          <InfoLine label="Founder" value={prospect.founder_name || "Unknown"} />
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           <InfoLine label="Segment" value={prospect.segment} />
-          <InfoLine label="Contact Path" value={prospect.contact_path || "Not captured"} />
           <InfoLine label="Team Size" value={prospect.team_size ?? "Unknown"} />
           <InfoLine label="Offer Estimate" value={prospect.offer_value_estimate ?? "Unknown"} />
           <InfoLine label="Status" value={prospect.status} />
