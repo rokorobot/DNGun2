@@ -34,6 +34,35 @@ def test_authority_scoring_engine_keyword_rules():
     assert "Standard corporate contact" in rationale
 
 
+def test_authority_scoring_whole_word_matches():
+    engine = AuthorityScoringEngine()
+
+    expected = {
+        "Founder": 95,
+        "Founder & CEO": 95,
+        "Co-Founder": 95,
+        "CEO": 90,
+        "Chief Operating Officer": 55,
+        "COO": 55,
+        "Head of Growth": 75,
+        "VP of Marketing": 75,
+    }
+    for role, expected_score in expected.items():
+        score, _ = engine.calculate(role)
+        assert score == expected_score, f"{role!r} scored {score}, expected {expected_score}"
+
+
+def test_authority_scoring_rejects_embedded_keyword_matches():
+    engine = AuthorityScoringEngine()
+
+    # "coo" must not match inside "coordinator": these fall through to the default.
+    for role in ["Marketing Coordinator", "Sales Coordinator", "Project Coordinator"]:
+        score, rationale = engine.calculate(role)
+        assert score == 20, f"{role!r} scored {score}, expected default 20"
+        assert "Standard corporate contact" in rationale
+        assert "COO" not in rationale
+
+
 def test_decision_maker_repository_crud(tmp_path):
     db_path = tmp_path / "test_dm.sqlite3"
     session_factory = create_session_factory(db_path)
