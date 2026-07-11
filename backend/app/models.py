@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -206,6 +216,9 @@ class EvidenceEntryModel(Base):
     evidence: Mapped[str] = mapped_column(Text, nullable=False)
     impact: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str | None] = mapped_column(String)
+    # Lifecycle state (ACTIVE / ARCHIVED / RETRACTED / INVALIDATED); evidence
+    # referenced by a hypothesis is never physically deleted (MVP 1.3 ruling 3).
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ACTIVE")
     pdm_code: Mapped[str | None] = mapped_column(String)
     offer_id: Mapped[str | None] = mapped_column(
         ForeignKey("offers.id", ondelete="SET NULL")
@@ -431,5 +444,108 @@ class ContactPathModel(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
     decision_maker: Mapped[DecisionMakerModel] = relationship(back_populates="contact_paths")
+
+
+class AcquisitionHypothesisModel(Base):
+    __tablename__ = "acquisition_hypotheses"
+    __table_args__ = (
+        # Exactly one active outreach hypothesis per offer x prospect pair.
+        Index(
+            "uq_active_hypothesis",
+            "offer_id",
+            "prospect_id",
+            unique=True,
+            sqlite_where=text("is_active = 1"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    offer_id: Mapped[str] = mapped_column(
+        ForeignKey("offers.id", ondelete="CASCADE"), nullable=False
+    )
+    prospect_id: Mapped[str] = mapped_column(
+        ForeignKey("prospects.id", ondelete="CASCADE"), nullable=False
+    )
+    decision_maker_id: Mapped[str | None] = mapped_column(
+        ForeignKey("decision_makers.id", ondelete="SET NULL")
+    )
+    refines_hypothesis_id: Mapped[str | None] = mapped_column(
+        ForeignKey("acquisition_hypotheses.id", ondelete="SET NULL")
+    )
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    recipient_framing: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    provider: Mapped[str | None] = mapped_column(String)
+    model: Mapped[str | None] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="DRAFT")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reasoning_confidence: Mapped[int | None] = mapped_column(Integer)
+    reasoning_confidence_explanation: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]"
+    )
+    # Reserved for MVP 1.4 outcome integration; must stay NULL in MVP 1.3.
+    empirical_confidence: Mapped[float | None] = mapped_column(Float)
+    reviewer_assessment: Mapped[str | None] = mapped_column(String)
+    superseded_by_id: Mapped[str | None] = mapped_column(
+        ForeignKey("acquisition_hypotheses.id", ondelete="SET NULL")
+    )
+    reviewed_at: Mapped[str | None] = mapped_column(String)
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    offer: Mapped[OfferModel] = relationship()
+    prospect: Mapped[ProspectModel] = relationship()
+    decision_maker: Mapped[DecisionMakerModel | None] = relationship()
+    evidence_links: Mapped[list[HypothesisEvidenceLinkModel]] = relationship(
+        back_populates="hypothesis", cascade="all, delete-orphan"
+    )
+    audit_events: Mapped[list[HypothesisAuditEventModel]] = relationship(
+        back_populates="hypothesis", cascade="all, delete-orphan"
+    )
+
+
+class HypothesisEvidenceLinkModel(Base):
+    __tablename__ = "hypothesis_evidence_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "hypothesis_id",
+            "evidence_entry_id",
+            name="uq_hypothesis_evidence",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    hypothesis_id: Mapped[str] = mapped_column(
+        ForeignKey("acquisition_hypotheses.id", ondelete="CASCADE"), nullable=False
+    )
+    # RESTRICT: referenced evidence is part of the historical decision trail
+    # and may transition lifecycle states, but never be physically deleted.
+    evidence_entry_id: Mapped[str] = mapped_column(
+        ForeignKey("evidence_entries.id", ondelete="RESTRICT"), nullable=False
+    )
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    hypothesis: Mapped[AcquisitionHypothesisModel] = relationship(
+        back_populates="evidence_links"
+    )
+    evidence_entry: Mapped[EvidenceEntryModel] = relationship()
+
+
+class HypothesisAuditEventModel(Base):
+    __tablename__ = "hypothesis_audit_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    hypothesis_id: Mapped[str] = mapped_column(
+        ForeignKey("acquisition_hypotheses.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    hypothesis: Mapped[AcquisitionHypothesisModel] = relationship(
+        back_populates="audit_events"
+    )
 
 

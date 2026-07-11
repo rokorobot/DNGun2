@@ -126,6 +126,82 @@ def migrate(db_path: Path | None = None) -> None:
             """
         )
 
+    # Create acquisition_hypotheses table if missing (MVP 1.3A)
+    if not table_exists(connection, "acquisition_hypotheses"):
+        print("Creating table: acquisition_hypotheses")
+        cursor.execute(
+            """
+            CREATE TABLE acquisition_hypotheses (
+                id TEXT PRIMARY KEY,
+                offer_id TEXT NOT NULL,
+                prospect_id TEXT NOT NULL,
+                decision_maker_id TEXT,
+                refines_hypothesis_id TEXT,
+                statement TEXT NOT NULL,
+                recipient_framing TEXT,
+                source TEXT NOT NULL,
+                provider TEXT,
+                model TEXT,
+                status TEXT NOT NULL DEFAULT 'DRAFT',
+                is_active INTEGER NOT NULL DEFAULT 0,
+                reasoning_confidence INTEGER,
+                reasoning_confidence_explanation TEXT NOT NULL DEFAULT '[]',
+                empirical_confidence REAL,
+                reviewer_assessment TEXT,
+                superseded_by_id TEXT,
+                reviewed_at TEXT,
+                review_notes TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (offer_id) REFERENCES offers (id) ON DELETE CASCADE,
+                FOREIGN KEY (prospect_id) REFERENCES prospects (id) ON DELETE CASCADE,
+                FOREIGN KEY (decision_maker_id) REFERENCES decision_makers (id) ON DELETE SET NULL,
+                FOREIGN KEY (refines_hypothesis_id) REFERENCES acquisition_hypotheses (id) ON DELETE SET NULL,
+                FOREIGN KEY (superseded_by_id) REFERENCES acquisition_hypotheses (id) ON DELETE SET NULL
+            )
+            """
+        )
+
+    # Create hypothesis_evidence_links table if missing (MVP 1.3A)
+    if not table_exists(connection, "hypothesis_evidence_links"):
+        print("Creating table: hypothesis_evidence_links")
+        cursor.execute(
+            """
+            CREATE TABLE hypothesis_evidence_links (
+                id TEXT PRIMARY KEY,
+                hypothesis_id TEXT NOT NULL,
+                evidence_entry_id TEXT NOT NULL,
+                note TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (hypothesis_id) REFERENCES acquisition_hypotheses (id) ON DELETE CASCADE,
+                FOREIGN KEY (evidence_entry_id) REFERENCES evidence_entries (id) ON DELETE RESTRICT,
+                CONSTRAINT uq_hypothesis_evidence UNIQUE (hypothesis_id, evidence_entry_id)
+            )
+            """
+        )
+
+    # Create hypothesis_audit_events table if missing (MVP 1.3A)
+    if not table_exists(connection, "hypothesis_audit_events"):
+        print("Creating table: hypothesis_audit_events")
+        cursor.execute(
+            """
+            CREATE TABLE hypothesis_audit_events (
+                id TEXT PRIMARY KEY,
+                hypothesis_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                detail TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (hypothesis_id) REFERENCES acquisition_hypotheses (id) ON DELETE CASCADE
+            )
+            """
+        )
+
+    # Single active outreach hypothesis per offer x prospect pair
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_active_hypothesis "
+        "ON acquisition_hypotheses (offer_id, prospect_id) WHERE is_active = 1"
+    )
+
     # 2. Add scoping/indexing fields to evidence_entries
     columns = get_existing_columns(connection, "evidence_entries")
     if columns:
@@ -135,6 +211,8 @@ def migrate(db_path: Path | None = None) -> None:
             ("campaign_batch_id", "TEXT"),
             ("signal_code", "TEXT"),
             ("alpha_signal_code", "TEXT"),
+            # MVP 1.3 ruling 3: evidence lifecycle states instead of deletion
+            ("status", "TEXT NOT NULL DEFAULT 'ACTIVE'"),
         ]
         for name, col_type in migrations_evidence:
             if name not in columns:
