@@ -407,21 +407,45 @@ def test_confidence_penalties():
     weak, _ = _score([_entry("EV-1"), _entry("EV-2", source=None)])
     assert weak == base - 2
 
-    withdrawn, _ = _score(
+    retracted, lines = _score(
         [_entry("EV-1"), _entry("EV-2"), _entry("EV-3", status="RETRACTED")]
     )
-    assert withdrawn == base - 8
+    assert retracted == base - 8
 
     invalidated, _ = _score(
         [_entry("EV-1"), _entry("EV-2"), _entry("EV-3", status="INVALIDATED")]
     )
     assert invalidated == base - 8
 
+    # Ruling R4: the penalty is named "disqualified evidence" and explicitly
+    # does not assert contradiction.
+    assert any("Disqualified-evidence penalty" in line for line in lines)
+    assert not any("contradictory" in line.lower() for line in lines)
 
-def test_confidence_archived_counts_but_not_recent():
+
+def test_confidence_archived_is_scoring_neutral():
+    # Ruling R3: ARCHIVED evidence contributes no positive factors...
     active, _ = _score([_entry("EV-1")])
-    archived, _ = _score([_entry("EV-1", status="ARCHIVED")])
-    assert archived == active - 4  # same count weight, no recency points
+    archived_only, _ = _score([_entry("EV-1", status="ARCHIVED")])
+    assert archived_only == 0
+
+    # ...adds nothing alongside ACTIVE evidence...
+    with_archived, lines = _score([_entry("EV-1"), _entry("EV-2", status="ARCHIVED")])
+    assert with_archived == active
+    assert any("scoring-neutral" in line for line in lines)
+
+    # ...and draws no penalty even when stale or sourceless.
+    with_stale_archived, _ = _score(
+        [_entry("EV-1"), _entry("EV-2", status="ARCHIVED", days_ago=400, source=None)]
+    )
+    assert with_stale_archived == active
+
+
+def test_confidence_duplicate_inputs_do_not_inflate():
+    entry = _entry("EV-1")
+    once = _score([entry])
+    repeated = _score([entry, entry, entry])
+    assert repeated == once
 
 
 def test_confidence_upper_bound_is_100():
@@ -610,7 +634,7 @@ def test_approve_and_reject_gates(tmp_path):
         assert approved.empirical_confidence is None
 
         # Reject path, and REJECTED is not re-reviewable.
-        repository2, _, _, second, _ = _draft_with_evidence(session)
+        repository2, offer2, prospect2, second, _ = _draft_with_evidence(session)
         repository2.propose_hypothesis(second.id, now=NOW)
         rejected = repository2.reject_hypothesis(second.id, review_notes="Weak.")
         assert rejected.status == "REJECTED"
@@ -618,6 +642,18 @@ def test_approve_and_reject_gates(tmp_path):
             repository2.approve_hypothesis(second.id)
         with pytest.raises(HypothesisGovernanceError):
             repository2.reject_hypothesis(second.id)
+
+        # Ruling R1: REJECTED is permanently terminal — it can never become
+        # SUPERSEDED, and a failed supersession attempt leaves no trace.
+        events_before = _events(session, second.id)
+        hypotheses_before = len(repository2.list_hypotheses(offer2.id, prospect2))
+        with pytest.raises(HypothesisGovernanceError):
+            repository2.supersede_hypothesis(second.id)
+        after = repository2.get_hypothesis(second.id)
+        assert after.status == "REJECTED"
+        assert after.superseded_by_id is None
+        assert _events(session, second.id) == events_before
+        assert len(repository2.list_hypotheses(offer2.id, prospect2)) == hypotheses_before
 
 
 def test_activation_preconditions(tmp_path):
@@ -726,6 +762,60 @@ def test_activation_swap_keeps_exactly_one_active(tmp_path):
         assert "DEACTIVATED" in _events(session, first.id)
 
 
+def test_activation_swap_rolls_back_atomically(tmp_path, monkeypatch):
+    session_factory = create_session_factory(tmp_path / "swap_rollback.sqlite3")
+    with session_factory() as session:
+        repository, offer, prospect_id, first, _ = _approved(session)
+        repository.activate_hypothesis(first.id)
+
+        second = repository.create_hypothesis(
+            offer.id, prospect_id, "Competing hypothesis.", "HUMAN"
+        )
+        repository.attach_evidence(second.id, _make_evidence(session).id)
+        repository.propose_hypothesis(second.id, now=NOW)
+        repository.approve_hypothesis(second.id)
+
+        first_events = len(_events(session, first.id))
+        second_events = len(_events(session, second.id))
+
+        original = Repository._record_hypothesis_audit
+
+        def explode(self, hypothesis_id, event_type, detail):
+            # Fail after the displacement but before activation completes.
+            if event_type == "ACTIVATED":
+                raise RuntimeError("simulated failure mid-activation")
+            return original(self, hypothesis_id, event_type, detail)
+
+        monkeypatch.setattr(Repository, "_record_hypothesis_audit", explode)
+        with pytest.raises(RuntimeError):
+            repository.activate_hypothesis(second.id)
+        monkeypatch.setattr(Repository, "_record_hypothesis_audit", original)
+
+        # The original stays active, the target stays inactive, and no stray
+        # ACTIVATED/DEACTIVATED audit events survive the rollback.
+        assert repository.get_hypothesis(first.id).is_active is True
+        assert repository.get_hypothesis(second.id).is_active is False
+        assert len(_events(session, first.id)) == first_events
+        assert len(_events(session, second.id)) == second_events
+
+
+def test_activation_rejected_with_only_archived_evidence(tmp_path):
+    session_factory = create_session_factory(tmp_path / "archived_act.sqlite3")
+    with session_factory() as session:
+        repository, _, _, hypothesis, entries = _approved(session)
+        repository.update_evidence_status(entries[0].id, "ARCHIVED")
+
+        # Frozen confidence exists, status is APPROVED — but no ACTIVE
+        # evidence link remains, so activation must fail (rulings R3 + the
+        # original activation precondition).
+        assert repository.get_hypothesis(hypothesis.id).reasoning_confidence is not None
+        with pytest.raises(HypothesisGovernanceError):
+            repository.activate_hypothesis(hypothesis.id)
+
+        repository.update_evidence_status(entries[0].id, "ACTIVE")
+        assert repository.activate_hypothesis(hypothesis.id).is_active is True
+
+
 def test_supersession_is_atomic_and_preserving(tmp_path):
     session_factory = create_session_factory(tmp_path / "supersede.sqlite3")
     with session_factory() as session:
@@ -747,10 +837,20 @@ def test_supersession_is_atomic_and_preserving(tmp_path):
         assert successor.reasoning_confidence is None
         assert successor.offer_id == offer.id and successor.prospect_id == prospect_id
         assert successor.statement == "Sharper claim about ecommerce expansion."
-        # Successor starts from the predecessor's evidence set (editable in DRAFT).
-        assert len(repository.list_hypothesis_evidence_links(successor.id)) == 2
+        # Ruling R2: the successor begins with ZERO evidence links.
+        assert repository.list_hypothesis_evidence_links(successor.id) == []
         # No active hypothesis remains — the successor must earn activation.
         assert repository.get_active_hypothesis(offer.id, prospect_id) is None
+
+        # Evidence enters the successor only through the ordinary admission
+        # path: eligible ACTIVE evidence attaches, non-ACTIVE is rejected.
+        repository.attach_evidence(successor.id, entries[0].id)
+        assert len(repository.list_hypothesis_evidence_links(successor.id)) == 1
+        repository.update_evidence_status(entries[1].id, "RETRACTED")
+        with pytest.raises(HypothesisGovernanceError):
+            repository.attach_evidence(successor.id, entries[1].id)
+        # The predecessor's links are untouched by any of this.
+        assert len(repository.list_hypothesis_evidence_links(hypothesis.id)) == 2
 
         # SUPERSEDED is terminal: no resurrection through any operation.
         for operation in (
@@ -844,6 +944,7 @@ def test_dormant_states_unreachable(tmp_path):
             ("APPROVED", "REJECTED"),
             ("APPROVED", "PROPOSED"),
             ("REJECTED", "APPROVED"),
+            ("REJECTED", "SUPERSEDED"),  # ruling R1: REJECTED is terminal
             ("SUPERSEDED", "DRAFT"),
             ("SUPERSEDED", "APPROVED"),
         ]

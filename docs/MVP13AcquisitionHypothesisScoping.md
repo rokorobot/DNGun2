@@ -166,7 +166,7 @@ WHERE is_active = 1;
 ```text
 DRAFT → PROPOSED → APPROVED → VALIDATING → SUPPORTED
                  ↘ REJECTED              ↘ WEAKENED
-any post-DRAFT state → SUPERSEDED
+PROPOSED / APPROVED → SUPERSEDED
 ```
 
 | Status | Meaning | Set by |
@@ -174,7 +174,7 @@ any post-DRAFT state → SUPERSEDED
 | DRAFT | Being authored; freely editable | Human, or generator output pre-submission |
 | PROPOSED | Submitted to the review gate; canonical content and evidence set freeze | Human action only |
 | APPROVED | A human accepts it as reasonable enough to use | Human action only |
-| REJECTED | Human declines it; terminal (may be cloned to a new DRAFT) | Human action only |
+| REJECTED | Human declines it; **terminal — permanent, never becomes SUPERSEDED** (remediation ruling R1; rejected-clone deferred) | Human action only |
 | VALIDATING | Active in outreach with outcomes pending | **Dormant in 1.3** — entered only by MVP 1.4 outcome integration |
 | SUPPORTED / WEAKENED | Outcome evidence supports / undermines the claim | **Dormant in 1.3** — MVP 1.4 only |
 | SUPERSEDED | Replaced by a successor; terminal, immutable | System, on successor approval or explicit supersede |
@@ -221,7 +221,23 @@ evidence only, using a documented rubric:
 - recency
 - relevance to the specific offer–prospect pair
 - decision-maker coverage, where applicable
-- penalties for stale, contradictory, or weakly sourced evidence
+- penalties for stale or weakly sourced evidence
+- a **disqualified-evidence penalty** for RETRACTED / INVALIDATED links
+
+**Evidence-state eligibility (remediation rulings R3/R4):**
+
+- Only evidence whose **current** lifecycle status is `ACTIVE` contributes
+  positive factors (count, diversity, recency, relevance, decision-maker
+  coverage) or draws the stale / weak-source penalties.
+- `ARCHIVED` evidence remains historically linked but is **scoring-neutral**:
+  no positive factors, no recency, no relevance, no penalty merely for being
+  archived — and it cannot satisfy activation.
+- `RETRACTED` and `INVALIDATED` linked evidence contribute no positive
+  support and incur the disqualified-evidence penalty. This penalty reflects
+  reliance on support that was subsequently withdrawn or invalidated; it does
+  **not** assert that the evidence disproves the hypothesis. True
+  contradictory-evidence scoring is **deferred** until the domain can
+  represent evidence polarity or an explicit contradiction relation.
 
 Every computation writes `reasoning_confidence_explanation` lines showing
 exactly how the score was derived, mirroring score provenance elsewhere in
@@ -313,6 +329,14 @@ There is **no fast-path** around review for successors: every superseding
 hypothesis re-enters the full review gate. Superseding never deletes or
 detaches the predecessor's evidence links — the full evidence trail of
 every hypothesis ever used remains auditable.
+
+**Successor evidence links (remediation ruling R2):** a supersession
+successor begins as a clean DRAFT with **zero evidence links**. Evidence is
+never copied or cloned from the predecessor; it must be attached
+deliberately through the ordinary admission path, which admits only
+evidence whose current lifecycle status is `ACTIVE`. This keeps a single
+admission rule and prevents withdrawn or invalidated evidence from entering
+a new version by cloning.
 
 ### API surface (sketch)
 
@@ -502,3 +526,38 @@ Resolutions of the four open questions from the draft:
    lifecycle `DRAFT / PROPOSED / APPROVED / USED / SUPERSEDED / REJECTED`;
    PROPOSED freezes canonical text and inputs; USED records exactly what
    was delivered and is never overwritten.
+
+---
+
+## Remediation rulings (2026-07-11, post-gate R1–R4)
+
+Issued after the adversarial contract-fidelity gate over checkpoint
+2375310. Binding on the 1.3A-2 remediation and all later work:
+
+1. **REJECTED is terminal.** A rejected hypothesis remains REJECTED
+   permanently and can never transition to SUPERSEDED. The phrase "may be
+   cloned to a new DRAFT" does not authorize changing the rejected
+   predecessor's lifecycle status.
+2. **Rejected-clone functionality is deferred.** The landed 1.3 schema
+   cannot express clone lineage honestly without overloading
+   `refines_hypothesis_id` (means decision-maker refinement) or
+   `superseded_by_id` (means replacement), and audit events must not serve
+   as a substitute source of domain truth. Cloning a REJECTED hypothesis is
+   therefore unimplemented until a dedicated lineage field is ratified.
+3. **Supersession successors begin with zero evidence links.** Evidence
+   enters a successor only through the ordinary attach path, which admits
+   only currently `ACTIVE` evidence. Predecessor links and audit history
+   remain untouched and permanently preserved.
+4. **Only ACTIVE evidence contributes positive confidence.** ARCHIVED
+   evidence is historically retained but scoring-neutral (no positive
+   factors, no penalties, cannot satisfy activation).
+5. **RETRACTED and INVALIDATED links incur the disqualified-evidence
+   penalty** (the previously ratified numeric value and cap are unchanged).
+   The penalty reflects reliance on withdrawn/invalidated support and does
+   not assert contradiction.
+6. **Contradictory-evidence scoring is deferred** until evidence polarity
+   or an explicit contradiction relation is representable in the domain.
+7. **Audit records never replace authoritative lifecycle or lineage
+   fields.** Status and lineage are read from `status`,
+   `refines_hypothesis_id`, and `superseded_by_id` — never reconstructed
+   from `hypothesis_audit_events`.

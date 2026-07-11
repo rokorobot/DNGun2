@@ -69,7 +69,8 @@ class HypothesisGovernanceError(Exception):
 
 # Lifecycle transitions implemented in MVP 1.3. VALIDATING / SUPPORTED /
 # WEAKENED are dormant until MVP 1.4 outcome integration and are rejected as
-# targets from every state (see _transition).
+# targets from every state (see _transition). REJECTED is permanently
+# terminal (remediation ruling R1) — it never becomes SUPERSEDED.
 ALLOWED_HYPOTHESIS_TRANSITIONS: dict[str, set[str]] = {
     HypothesisStatus.DRAFT: {HypothesisStatus.PROPOSED},
     HypothesisStatus.PROPOSED: {
@@ -78,7 +79,7 @@ ALLOWED_HYPOTHESIS_TRANSITIONS: dict[str, set[str]] = {
         HypothesisStatus.SUPERSEDED,
     },
     HypothesisStatus.APPROVED: {HypothesisStatus.SUPERSEDED},
-    HypothesisStatus.REJECTED: {HypothesisStatus.SUPERSEDED},
+    HypothesisStatus.REJECTED: set(),
     HypothesisStatus.SUPERSEDED: set(),
     HypothesisStatus.VALIDATING: set(),
     HypothesisStatus.SUPPORTED: set(),
@@ -1226,18 +1227,10 @@ class Repository:
             # references it via superseded_by_id (self-referential FK gives
             # the unit of work no ordering edge). Still one transaction.
             self.session.flush()
-            # The successor starts from the predecessor's evidence set; it is
-            # freely editable while the successor remains DRAFT.
-            for link in self.list_hypothesis_evidence_links(model.id):
-                self.session.add(
-                    models.HypothesisEvidenceLinkModel(
-                        id=prefixed_id("HEL"),
-                        hypothesis_id=successor.id,
-                        evidence_entry_id=link.evidence_entry_id,
-                        note=link.note,
-                        created_at=now,
-                    )
-                )
+            # Remediation ruling R2: the successor begins with ZERO evidence
+            # links. Evidence enters it only through attach_evidence, which
+            # admits only currently ACTIVE evidence. The predecessor's links
+            # remain untouched and permanently preserved.
             self._transition(
                 model,
                 HypothesisStatus.SUPERSEDED.value,
