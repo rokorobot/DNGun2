@@ -17,10 +17,10 @@ Domain mapping notes:
 Get-Content docs/Phase1DomainMapping.md
 ```
 
-Run locally:
+Run locally (the frontend proxy expects port 8001):
 
 ```powershell
-uvicorn backend.app.main:app --reload
+python -m uvicorn backend.app.main:app --reload --port 8001
 ```
 
 Run tests:
@@ -37,6 +37,13 @@ Seed MVP 0.1 sample data:
 
 ```powershell
 python backend\scripts\seed_mvp0.py
+```
+
+Recalculate stored decision-maker authority scores after rule or
+matcher changes (scores are persisted at write time):
+
+```powershell
+python backend\scripts\recalculate_authority.py
 ```
 
 Campaign intelligence report:

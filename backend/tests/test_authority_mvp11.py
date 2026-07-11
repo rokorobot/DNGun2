@@ -10,6 +10,7 @@ from backend.app.schemas import DecisionMakerCreate, ProspectCreate
 from backend.app.rules import RuleRegistry
 from backend.app import models
 from backend.scripts.migrate_db import migrate
+from backend.scripts.recalculate_authority import recalculate_decision_maker_authority
 
 
 def test_authority_scoring_engine_keyword_rules():
@@ -61,6 +62,48 @@ def test_authority_scoring_rejects_embedded_keyword_matches():
         assert score == 20, f"{role!r} scored {score}, expected default 20"
         assert "Standard corporate contact" in rationale
         assert "COO" not in rationale
+
+
+def test_recalculate_decision_maker_authority_fixes_stale_scores(tmp_path):
+    db_path = tmp_path / "test_recalc.sqlite3"
+    session_factory = create_session_factory(db_path)
+
+    with session_factory() as session:
+        repository = Repository(session)
+        prospect = repository.create_prospect(
+            ProspectCreate(company_name="Recalc Corp", segment="AI_AUTOMATION")
+        )
+        # Stale record: stored score/rationale predate the matcher fix.
+        stale = repository.create_decision_maker(
+            prospect.id,
+            DecisionMakerCreate(name="Stale Coordinator", role="Marketing Coordinator"),
+            55,
+            "COO handles operations and corporate domain infrastructure.",
+        )
+        # Correct record: must not be touched by the recalculation.
+        current = repository.create_decision_maker(
+            prospect.id,
+            DecisionMakerCreate(name="Fresh Founder", role="Founder"),
+            95,
+            "Founder likely controls branding and domain acquisition decisions for early-stage company.",
+        )
+
+    result = recalculate_decision_maker_authority(db_path)
+    assert result == {"scanned": 2, "updated": 1}
+
+    with session_factory() as session:
+        repository = Repository(session)
+        fixed = repository.get_decision_maker(stale.id)
+        assert fixed.authority_score == 20
+        assert "Standard corporate contact" in fixed.acquisition_rationale
+        assert fixed.updated_at != stale.updated_at
+
+        untouched = repository.get_decision_maker(current.id)
+        assert untouched.authority_score == 95
+        assert untouched.updated_at == current.updated_at
+
+    # Second run is a no-op.
+    assert recalculate_decision_maker_authority(db_path) == {"scanned": 2, "updated": 0}
 
 
 def test_decision_maker_repository_crud(tmp_path):
