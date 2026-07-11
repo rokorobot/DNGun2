@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import models
+from .reasoning_confidence import compute_reasoning_confidence
 from .schemas import (
+    EvidenceStatus,
+    HypothesisSource,
+    HypothesisStatus,
+    ReviewerAssessment,
     AlphaSignal,
     AlphaSignalCreate,
     CampaignBatch,
@@ -55,6 +61,40 @@ def prefixed_id(prefix: str) -> str:
 
 class RepositoryConflictError(Exception):
     pass
+
+
+class HypothesisGovernanceError(Exception):
+    """A governed hypothesis operation violated the ratified MVP 1.3 contract."""
+
+
+# Lifecycle transitions implemented in MVP 1.3. VALIDATING / SUPPORTED /
+# WEAKENED are dormant until MVP 1.4 outcome integration and are rejected as
+# targets from every state (see _transition).
+ALLOWED_HYPOTHESIS_TRANSITIONS: dict[str, set[str]] = {
+    HypothesisStatus.DRAFT: {HypothesisStatus.PROPOSED},
+    HypothesisStatus.PROPOSED: {
+        HypothesisStatus.APPROVED,
+        HypothesisStatus.REJECTED,
+        HypothesisStatus.SUPERSEDED,
+    },
+    HypothesisStatus.APPROVED: {HypothesisStatus.SUPERSEDED},
+    HypothesisStatus.REJECTED: {HypothesisStatus.SUPERSEDED},
+    HypothesisStatus.SUPERSEDED: set(),
+    HypothesisStatus.VALIDATING: set(),
+    HypothesisStatus.SUPPORTED: set(),
+    HypothesisStatus.WEAKENED: set(),
+}
+
+DORMANT_HYPOTHESIS_STATUSES = {
+    HypothesisStatus.VALIDATING,
+    HypothesisStatus.SUPPORTED,
+    HypothesisStatus.WEAKENED,
+}
+
+# Ruling 2: only non-canonical operator metadata may be corrected in place.
+CORRECTABLE_HYPOTHESIS_FIELDS = {"review_notes"}
+
+_UNSET = object()
 
 
 class Repository:
@@ -760,6 +800,616 @@ class Repository:
         self.session.commit()
         return True
 
+    # ------------------------------------------------------------------
+    # Acquisition hypotheses (MVP 1.3A-2) — governed by the ratified
+    # contract in docs/MVP13AcquisitionHypothesisScoping.md.
+    # ------------------------------------------------------------------
+
+    def create_hypothesis(
+        self,
+        offer_id: str,
+        prospect_id: str,
+        statement: str,
+        source: str,
+        *,
+        decision_maker_id: str | None = None,
+        refines_hypothesis_id: str | None = None,
+        recipient_framing: str | None = None,
+        provider: str | None = None,
+        model_name: str | None = None,
+    ) -> models.AcquisitionHypothesisModel:
+        if source not in set(HypothesisSource):
+            raise HypothesisGovernanceError(f"Unknown hypothesis source: {source}")
+        if not statement or not statement.strip():
+            raise HypothesisGovernanceError("Hypothesis statement must not be empty")
+        if self.session.get(models.OfferModel, offer_id) is None:
+            raise HypothesisGovernanceError(f"Offer not found: {offer_id}")
+        if self.session.get(models.ProspectModel, prospect_id) is None:
+            raise HypothesisGovernanceError(f"Prospect not found: {prospect_id}")
+        if decision_maker_id is not None:
+            decision_maker = self.session.get(models.DecisionMakerModel, decision_maker_id)
+            if decision_maker is None or decision_maker.prospect_id != prospect_id:
+                raise HypothesisGovernanceError(
+                    "Decision maker must exist and belong to the bound prospect"
+                )
+        if refines_hypothesis_id is not None:
+            parent = self.session.get(
+                models.AcquisitionHypothesisModel, refines_hypothesis_id
+            )
+            if parent is None or parent.offer_id != offer_id or parent.prospect_id != prospect_id:
+                raise HypothesisGovernanceError(
+                    "Refined hypothesis must exist and share the same offer and prospect"
+                )
+        now = utc_now_iso()
+        model = models.AcquisitionHypothesisModel(
+            id=prefixed_id("AH"),
+            offer_id=offer_id,
+            prospect_id=prospect_id,
+            decision_maker_id=decision_maker_id,
+            refines_hypothesis_id=refines_hypothesis_id,
+            statement=statement,
+            recipient_framing=recipient_framing,
+            source=source,
+            provider=provider,
+            model=model_name,
+            status=HypothesisStatus.DRAFT.value,
+            is_active=False,
+            created_at=now,
+            updated_at=now,
+        )
+        try:
+            self.session.add(model)
+            self._record_hypothesis_audit(
+                model.id, "CREATED", {"source": source, "statement": statement}
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        self.session.refresh(model)
+        return model
+
+    def get_hypothesis(self, hypothesis_id: str) -> models.AcquisitionHypothesisModel | None:
+        return self.session.get(models.AcquisitionHypothesisModel, hypothesis_id)
+
+    def get_active_hypothesis(
+        self, offer_id: str, prospect_id: str
+    ) -> models.AcquisitionHypothesisModel | None:
+        return self.session.scalar(
+            select(models.AcquisitionHypothesisModel).where(
+                models.AcquisitionHypothesisModel.offer_id == offer_id,
+                models.AcquisitionHypothesisModel.prospect_id == prospect_id,
+                models.AcquisitionHypothesisModel.is_active == True,  # noqa: E712
+            )
+        )
+
+    def list_hypotheses(
+        self, offer_id: str, prospect_id: str
+    ) -> list[models.AcquisitionHypothesisModel]:
+        return list(
+            self.session.scalars(
+                select(models.AcquisitionHypothesisModel)
+                .where(
+                    models.AcquisitionHypothesisModel.offer_id == offer_id,
+                    models.AcquisitionHypothesisModel.prospect_id == prospect_id,
+                )
+                .order_by(
+                    models.AcquisitionHypothesisModel.created_at.asc(),
+                    models.AcquisitionHypothesisModel.id.asc(),
+                )
+            )
+        )
+
+    def list_hypothesis_evidence_links(
+        self, hypothesis_id: str
+    ) -> list[models.HypothesisEvidenceLinkModel]:
+        return list(
+            self.session.scalars(
+                select(models.HypothesisEvidenceLinkModel)
+                .where(models.HypothesisEvidenceLinkModel.hypothesis_id == hypothesis_id)
+                .order_by(
+                    models.HypothesisEvidenceLinkModel.created_at.asc(),
+                    models.HypothesisEvidenceLinkModel.id.asc(),
+                )
+            )
+        )
+
+    def list_hypothesis_audit_events(
+        self, hypothesis_id: str
+    ) -> list[models.HypothesisAuditEventModel]:
+        return list(
+            self.session.scalars(
+                select(models.HypothesisAuditEventModel)
+                .where(models.HypothesisAuditEventModel.hypothesis_id == hypothesis_id)
+                .order_by(
+                    models.HypothesisAuditEventModel.created_at.asc(),
+                    models.HypothesisAuditEventModel.id.asc(),
+                )
+            )
+        )
+
+    def update_draft_hypothesis(
+        self,
+        hypothesis_id: str,
+        *,
+        statement: object = _UNSET,
+        recipient_framing: object = _UNSET,
+    ) -> models.AcquisitionHypothesisModel:
+        model = self._require_hypothesis(hypothesis_id)
+        self._require_draft(model, "Canonical content is frozen once a hypothesis leaves DRAFT")
+        changes: dict[str, dict[str, str | None]] = {}
+        if statement is not _UNSET:
+            if not statement or not str(statement).strip():
+                raise HypothesisGovernanceError("Hypothesis statement must not be empty")
+            changes["statement"] = {"before": model.statement, "after": str(statement)}
+            model.statement = str(statement)
+        if recipient_framing is not _UNSET:
+            changes["recipient_framing"] = {
+                "before": model.recipient_framing,
+                "after": recipient_framing if recipient_framing is None else str(recipient_framing),
+            }
+            model.recipient_framing = (
+                recipient_framing if recipient_framing is None else str(recipient_framing)
+            )
+        if not changes:
+            return model
+        model.updated_at = utc_now_iso()
+        try:
+            self._record_hypothesis_audit(model.id, "DRAFT_UPDATED", changes)
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        return model
+
+    def attach_evidence(
+        self, hypothesis_id: str, evidence_entry_id: str, note: str | None = None
+    ) -> models.HypothesisEvidenceLinkModel:
+        model = self._require_hypothesis(hypothesis_id)
+        self._require_draft(model, "Evidence set is frozen once a hypothesis leaves DRAFT")
+        evidence = self.session.get(models.EvidenceEntryModel, evidence_entry_id)
+        if evidence is None:
+            raise HypothesisGovernanceError(f"Evidence entry not found: {evidence_entry_id}")
+        if evidence.status != EvidenceStatus.ACTIVE.value:
+            raise HypothesisGovernanceError(
+                f"Only ACTIVE evidence may be newly attached (status={evidence.status})"
+            )
+        existing = self.session.scalar(
+            select(models.HypothesisEvidenceLinkModel).where(
+                models.HypothesisEvidenceLinkModel.hypothesis_id == hypothesis_id,
+                models.HypothesisEvidenceLinkModel.evidence_entry_id == evidence_entry_id,
+            )
+        )
+        if existing:
+            raise RepositoryConflictError("Evidence already attached to hypothesis")
+        link = models.HypothesisEvidenceLinkModel(
+            id=prefixed_id("HEL"),
+            hypothesis_id=hypothesis_id,
+            evidence_entry_id=evidence_entry_id,
+            note=note,
+            created_at=utc_now_iso(),
+        )
+        try:
+            self.session.add(link)
+            self._invalidate_confidence(model)
+            self._record_hypothesis_audit(
+                model.id,
+                "EVIDENCE_ATTACHED",
+                {"evidence_entry_id": evidence_entry_id, "note": note},
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        self.session.refresh(link)
+        return link
+
+    def detach_evidence(self, hypothesis_id: str, evidence_entry_id: str) -> None:
+        model = self._require_hypothesis(hypothesis_id)
+        self._require_draft(model, "Evidence set is frozen once a hypothesis leaves DRAFT")
+        link = self.session.scalar(
+            select(models.HypothesisEvidenceLinkModel).where(
+                models.HypothesisEvidenceLinkModel.hypothesis_id == hypothesis_id,
+                models.HypothesisEvidenceLinkModel.evidence_entry_id == evidence_entry_id,
+            )
+        )
+        if link is None:
+            raise HypothesisGovernanceError("Evidence link not found")
+        try:
+            self.session.delete(link)
+            self._invalidate_confidence(model)
+            self._record_hypothesis_audit(
+                model.id, "EVIDENCE_DETACHED", {"evidence_entry_id": evidence_entry_id}
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+
+    def compute_hypothesis_confidence(
+        self, hypothesis_id: str, now: datetime | None = None
+    ) -> models.AcquisitionHypothesisModel:
+        model = self._require_hypothesis(hypothesis_id)
+        self._require_draft(
+            model, "Reasoning confidence is frozen once a hypothesis leaves DRAFT"
+        )
+        try:
+            self._compute_and_store_confidence(model, now)
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        self.session.refresh(model)
+        return model
+
+    def propose_hypothesis(
+        self, hypothesis_id: str, now: datetime | None = None
+    ) -> models.AcquisitionHypothesisModel:
+        model = self._require_hypothesis(hypothesis_id)
+        self._require_draft(model, "Only a DRAFT hypothesis can be proposed")
+        try:
+            # Freeze point: confidence is computed against the frozen evidence
+            # set as part of entering PROPOSED (ratified ruling 1).
+            self._compute_and_store_confidence(model, now)
+            self._transition(model, HypothesisStatus.PROPOSED.value)
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        self.session.refresh(model)
+        return model
+
+    def approve_hypothesis(
+        self,
+        hypothesis_id: str,
+        reviewer_assessment: str | None = None,
+        review_notes: str | None = None,
+    ) -> models.AcquisitionHypothesisModel:
+        model = self._require_hypothesis(hypothesis_id)
+        if model.status != HypothesisStatus.PROPOSED.value:
+            raise HypothesisGovernanceError(
+                f"Only a PROPOSED hypothesis can be approved (status={model.status})"
+            )
+        # Invariant 1: no evidence means no approvable hypothesis.
+        if not self.list_hypothesis_evidence_links(hypothesis_id):
+            raise HypothesisGovernanceError(
+                "A hypothesis without linked evidence cannot be approved"
+            )
+        if reviewer_assessment is not None and reviewer_assessment not in set(
+            ReviewerAssessment
+        ):
+            raise HypothesisGovernanceError(
+                f"Unknown reviewer assessment: {reviewer_assessment}"
+            )
+        try:
+            self._transition(model, HypothesisStatus.APPROVED.value)
+            model.reviewer_assessment = reviewer_assessment
+            model.review_notes = review_notes
+            model.reviewed_at = utc_now_iso()
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        self.session.refresh(model)
+        return model
+
+    def reject_hypothesis(
+        self, hypothesis_id: str, review_notes: str | None = None
+    ) -> models.AcquisitionHypothesisModel:
+        model = self._require_hypothesis(hypothesis_id)
+        if model.status != HypothesisStatus.PROPOSED.value:
+            raise HypothesisGovernanceError(
+                f"Only a PROPOSED hypothesis can be rejected (status={model.status})"
+            )
+        try:
+            self._transition(model, HypothesisStatus.REJECTED.value)
+            model.review_notes = review_notes
+            model.reviewed_at = utc_now_iso()
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        self.session.refresh(model)
+        return model
+
+    def activate_hypothesis(self, hypothesis_id: str) -> models.AcquisitionHypothesisModel:
+        model = self._require_hypothesis(hypothesis_id)
+        if model.is_active:
+            return model
+        # Ratified activation preconditions — all four, enforced here.
+        if model.status != HypothesisStatus.APPROVED.value:
+            raise HypothesisGovernanceError(
+                f"Only an APPROVED hypothesis can be activated (status={model.status})"
+            )
+        if model.refines_hypothesis_id is not None:
+            parent = self.session.get(
+                models.AcquisitionHypothesisModel, model.refines_hypothesis_id
+            )
+            if parent is None or parent.status != HypothesisStatus.APPROVED.value:
+                raise HypothesisGovernanceError(
+                    "A refinement cannot be activated while its parent hypothesis is not APPROVED"
+                )
+        active_evidence = self.session.scalar(
+            select(models.HypothesisEvidenceLinkModel)
+            .join(
+                models.EvidenceEntryModel,
+                models.HypothesisEvidenceLinkModel.evidence_entry_id
+                == models.EvidenceEntryModel.id,
+            )
+            .where(
+                models.HypothesisEvidenceLinkModel.hypothesis_id == hypothesis_id,
+                models.EvidenceEntryModel.status == EvidenceStatus.ACTIVE.value,
+            )
+        )
+        if active_evidence is None:
+            raise HypothesisGovernanceError(
+                "Activation requires at least one linked evidence entry in ACTIVE state"
+            )
+        if model.reasoning_confidence is None:
+            raise HypothesisGovernanceError(
+                "Activation requires a computed reasoning confidence"
+            )
+        try:
+            current = self.session.scalar(
+                select(models.AcquisitionHypothesisModel).where(
+                    models.AcquisitionHypothesisModel.offer_id == model.offer_id,
+                    models.AcquisitionHypothesisModel.prospect_id == model.prospect_id,
+                    models.AcquisitionHypothesisModel.is_active == True,  # noqa: E712
+                    models.AcquisitionHypothesisModel.id != model.id,
+                )
+            )
+            if current is not None:
+                current.is_active = False
+                current.updated_at = utc_now_iso()
+                self._record_hypothesis_audit(
+                    current.id, "DEACTIVATED", {"replaced_by": model.id}
+                )
+                self.session.flush()
+            model.is_active = True
+            model.updated_at = utc_now_iso()
+            self._record_hypothesis_audit(model.id, "ACTIVATED", {})
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        self.session.refresh(model)
+        return model
+
+    def supersede_hypothesis(
+        self,
+        hypothesis_id: str,
+        *,
+        statement: str | None = None,
+        recipient_framing: str | None = None,
+        source: str = HypothesisSource.HUMAN.value,
+    ) -> models.AcquisitionHypothesisModel:
+        model = self._require_hypothesis(hypothesis_id)
+        if model.status == HypothesisStatus.DRAFT.value:
+            raise HypothesisGovernanceError(
+                "A DRAFT hypothesis is edited directly, not superseded"
+            )
+        if HypothesisStatus.SUPERSEDED.value not in ALLOWED_HYPOTHESIS_TRANSITIONS.get(
+            model.status, set()
+        ):
+            raise HypothesisGovernanceError(
+                f"A {model.status} hypothesis cannot be superseded"
+            )
+        if source not in set(HypothesisSource):
+            raise HypothesisGovernanceError(f"Unknown hypothesis source: {source}")
+        try:
+            now = utc_now_iso()
+            if model.is_active:
+                model.is_active = False
+                self._record_hypothesis_audit(
+                    model.id, "DEACTIVATED", {"reason": "superseded"}
+                )
+            successor = models.AcquisitionHypothesisModel(
+                id=prefixed_id("AH"),
+                offer_id=model.offer_id,
+                prospect_id=model.prospect_id,
+                decision_maker_id=model.decision_maker_id,
+                refines_hypothesis_id=model.refines_hypothesis_id,
+                statement=statement if statement is not None else model.statement,
+                recipient_framing=(
+                    recipient_framing
+                    if recipient_framing is not None
+                    else model.recipient_framing
+                ),
+                source=source,
+                status=HypothesisStatus.DRAFT.value,
+                is_active=False,
+                created_at=now,
+                updated_at=now,
+            )
+            self.session.add(successor)
+            # Flush the successor INSERT before the predecessor UPDATE
+            # references it via superseded_by_id (self-referential FK gives
+            # the unit of work no ordering edge). Still one transaction.
+            self.session.flush()
+            # The successor starts from the predecessor's evidence set; it is
+            # freely editable while the successor remains DRAFT.
+            for link in self.list_hypothesis_evidence_links(model.id):
+                self.session.add(
+                    models.HypothesisEvidenceLinkModel(
+                        id=prefixed_id("HEL"),
+                        hypothesis_id=successor.id,
+                        evidence_entry_id=link.evidence_entry_id,
+                        note=link.note,
+                        created_at=now,
+                    )
+                )
+            self._transition(
+                model,
+                HypothesisStatus.SUPERSEDED.value,
+                extra_detail={"successor_id": successor.id},
+            )
+            model.superseded_by_id = successor.id
+            self._record_hypothesis_audit(
+                successor.id, "CREATED", {"superseded_from": model.id, "source": source}
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        self.session.refresh(successor)
+        return successor
+
+    def correct_hypothesis_metadata(
+        self, hypothesis_id: str, field: str, value: str | None, reason: str
+    ) -> models.AcquisitionHypothesisModel:
+        model = self._require_hypothesis(hypothesis_id)
+        if field not in CORRECTABLE_HYPOTHESIS_FIELDS:
+            raise HypothesisGovernanceError(
+                f"Field '{field}' is canonical or ungoverned and cannot be corrected in place;"
+                " substantive changes require supersession"
+            )
+        before = getattr(model, field)
+        try:
+            setattr(model, field, value)
+            model.updated_at = utc_now_iso()
+            self._record_hypothesis_audit(
+                model.id,
+                "METADATA_CORRECTED",
+                {"field": field, "before": before, "after": value, "reason": reason},
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        return model
+
+    def correct_evidence_link_note(
+        self, hypothesis_id: str, evidence_entry_id: str, note: str | None, reason: str
+    ) -> models.HypothesisEvidenceLinkModel:
+        self._require_hypothesis(hypothesis_id)
+        link = self.session.scalar(
+            select(models.HypothesisEvidenceLinkModel).where(
+                models.HypothesisEvidenceLinkModel.hypothesis_id == hypothesis_id,
+                models.HypothesisEvidenceLinkModel.evidence_entry_id == evidence_entry_id,
+            )
+        )
+        if link is None:
+            raise HypothesisGovernanceError("Evidence link not found")
+        before = link.note
+        try:
+            link.note = note
+            self._record_hypothesis_audit(
+                hypothesis_id,
+                "METADATA_CORRECTED",
+                {
+                    "field": "evidence_link_note",
+                    "evidence_entry_id": evidence_entry_id,
+                    "before": before,
+                    "after": note,
+                    "reason": reason,
+                },
+            )
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        return link
+
+    def update_evidence_status(
+        self, evidence_entry_id: str, status: str
+    ) -> models.EvidenceEntryModel:
+        if status not in set(EvidenceStatus):
+            raise HypothesisGovernanceError(f"Unknown evidence status: {status}")
+        entry = self.session.get(models.EvidenceEntryModel, evidence_entry_id)
+        if entry is None:
+            raise HypothesisGovernanceError(
+                f"Evidence entry not found: {evidence_entry_id}"
+            )
+        entry.status = status
+        self.session.commit()
+        return entry
+
+    def _require_hypothesis(self, hypothesis_id: str) -> models.AcquisitionHypothesisModel:
+        model = self.session.get(models.AcquisitionHypothesisModel, hypothesis_id)
+        if model is None:
+            raise HypothesisGovernanceError(f"Hypothesis not found: {hypothesis_id}")
+        return model
+
+    @staticmethod
+    def _require_draft(model: models.AcquisitionHypothesisModel, message: str) -> None:
+        if model.status != HypothesisStatus.DRAFT.value:
+            raise HypothesisGovernanceError(f"{message} (status={model.status})")
+
+    def _transition(
+        self,
+        model: models.AcquisitionHypothesisModel,
+        target: str,
+        extra_detail: dict | None = None,
+    ) -> None:
+        """Validate-then-mutate lifecycle transition. Never commits."""
+        if target in DORMANT_HYPOTHESIS_STATUSES:
+            raise HypothesisGovernanceError(
+                f"Status {target} is dormant until MVP 1.4 outcome integration"
+            )
+        allowed = ALLOWED_HYPOTHESIS_TRANSITIONS.get(model.status, set())
+        if target not in allowed:
+            raise HypothesisGovernanceError(
+                f"Transition {model.status} -> {target} is not permitted"
+            )
+        detail = {"from": model.status, "to": target}
+        if extra_detail:
+            detail.update(extra_detail)
+        model.status = target
+        model.updated_at = utc_now_iso()
+        self._record_hypothesis_audit(model.id, "STATUS_CHANGED", detail)
+
+    def _invalidate_confidence(self, model: models.AcquisitionHypothesisModel) -> None:
+        """A changed evidence set invalidates any previously computed score."""
+        model.reasoning_confidence = None
+        model.reasoning_confidence_explanation = "[]"
+        model.updated_at = utc_now_iso()
+
+    def _compute_and_store_confidence(
+        self, model: models.AcquisitionHypothesisModel, now: datetime | None = None
+    ) -> int:
+        links = self.list_hypothesis_evidence_links(model.id)
+        entries = [
+            self.session.get(models.EvidenceEntryModel, link.evidence_entry_id)
+            for link in links
+        ]
+        prospect = self.session.get(models.ProspectModel, model.prospect_id)
+        segment = self.session.scalar(
+            select(models.SegmentRegistryModel).where(
+                models.SegmentRegistryModel.code == prospect.segment
+            )
+        )
+        decision_maker_text = None
+        if model.decision_maker_id is not None:
+            decision_maker = self.session.get(
+                models.DecisionMakerModel, model.decision_maker_id
+            )
+            if decision_maker is not None:
+                decision_maker_text = f"{decision_maker.name} {decision_maker.role}"
+        score, lines = compute_reasoning_confidence(
+            entries,
+            offer_id=model.offer_id,
+            prospect_pdm_code=segment.pdm_code if segment else None,
+            decision_maker_text=decision_maker_text,
+            now=now or datetime.now(timezone.utc),
+        )
+        model.reasoning_confidence = score
+        model.reasoning_confidence_explanation = json.dumps(lines)
+        model.updated_at = utc_now_iso()
+        self._record_hypothesis_audit(model.id, "CONFIDENCE_COMPUTED", {"score": score})
+        return score
+
+    def _record_hypothesis_audit(
+        self, hypothesis_id: str, event_type: str, detail: dict
+    ) -> None:
+        self.session.add(
+            models.HypothesisAuditEventModel(
+                id=prefixed_id("HAE"),
+                hypothesis_id=hypothesis_id,
+                event_type=event_type,
+                detail=json.dumps(detail, sort_keys=True),
+                created_at=utc_now_iso(),
+            )
+        )
 
     def _clear_offer_profile_rows(self, offer_id: str) -> None:
         for model_class in [

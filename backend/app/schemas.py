@@ -74,6 +74,37 @@ class OfferFitDecision(StrEnum):
     DISQUALIFIED = "DISQUALIFIED"
 
 
+class HypothesisStatus(StrEnum):
+    DRAFT = "DRAFT"
+    PROPOSED = "PROPOSED"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    SUPERSEDED = "SUPERSEDED"
+    # Dormant until MVP 1.4 outcome integration; unreachable in MVP 1.3.
+    VALIDATING = "VALIDATING"
+    SUPPORTED = "SUPPORTED"
+    WEAKENED = "WEAKENED"
+
+
+class HypothesisSource(StrEnum):
+    HUMAN = "HUMAN"
+    DETERMINISTIC = "DETERMINISTIC"
+    LLM_ASSISTED = "LLM_ASSISTED"
+
+
+class ReviewerAssessment(StrEnum):
+    STRONG = "STRONG"
+    ADEQUATE = "ADEQUATE"
+    WEAK = "WEAK"
+
+
+class EvidenceStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+    RETRACTED = "RETRACTED"
+    INVALIDATED = "INVALIDATED"
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
