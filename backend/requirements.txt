@@ -4,4 +4,4 @@ pydantic
 sqlalchemy
 pyyaml
 pytest
-httpx
+httpx2

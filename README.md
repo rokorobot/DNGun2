@@ -10,13 +10,14 @@ for the full architecture and roadmap.
 
 Backend (FastAPI + SQLite). The frontend proxy expects port **8001**:
 
-```powershell
+```sh
+pip install -r backend/requirements.txt
 python -m uvicorn backend.app.main:app --reload --port 8001
 ```
 
 Frontend (Next.js on http://127.0.0.1:3000):
 
-```powershell
+```sh
 cd frontend
 npm install
 npm run dev
@@ -27,14 +28,14 @@ the `DNGUN_DB_PATH` environment variable).
 
 ## Tests
 
-```powershell
+```sh
 python -m pytest backend/tests
 ```
 
 ## Seed sample data
 
-```powershell
-python backend\scripts\seed_mvp0.py
+```sh
+python backend/scripts/seed_mvp0.py
 ```
 
 ## Maintenance
@@ -43,8 +44,8 @@ Recalculate stored decision-maker authority scores after changing
 `backend/app/rules/authority_rules.yaml` or the matching logic
 (scores are persisted at write time, so existing records go stale):
 
-```powershell
-python backend\scripts\recalculate_authority.py
+```sh
+python backend/scripts/recalculate_authority.py
 ```
 
 Updates only records whose score or rationale changed and reports the

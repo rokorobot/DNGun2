@@ -13,19 +13,19 @@ MVP 0 implements the internal prospect intelligence loop:
 
 Domain mapping notes:
 
-```powershell
-Get-Content docs/Phase1DomainMapping.md
+```sh
+cat docs/Phase1DomainMapping.md
 ```
 
 Run locally (the frontend proxy expects port 8001):
 
-```powershell
+```sh
 python -m uvicorn backend.app.main:app --reload --port 8001
 ```
 
 Run tests:
 
-```powershell
+```sh
 pytest backend/tests
 ```
 
@@ -35,15 +35,15 @@ No email automation, scraping, auth, billing, or CRM features are included.
 
 Seed MVP 0.1 sample data:
 
-```powershell
-python backend\scripts\seed_mvp0.py
+```sh
+python backend/scripts/seed_mvp0.py
 ```
 
 Recalculate stored decision-maker authority scores after rule or
 matcher changes (scores are persisted at write time):
 
-```powershell
-python backend\scripts\recalculate_authority.py
+```sh
+python backend/scripts/recalculate_authority.py
 ```
 
 Campaign intelligence report:
