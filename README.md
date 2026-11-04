@@ -38,6 +38,18 @@ python -m pytest backend/tests
 python backend/scripts/seed_mvp0.py
 ```
 
+## Find buyers for a domain (treg)
+
+Ranks companies that buy Google Ads on, or rank organically for, a domain's
+keyword. It pulls live data through [treg](https://treg.to) and needs
+`TREG_TOKEN` in the environment or the repo-root `.env`. It only reads data
+and writes nothing to the database. Each keyword costs about $0.02–0.04.
+
+```sh
+python backend/scripts/find_domain_buyers.py aiautomation.com --keyword "ai automation" --dry-run
+python backend/scripts/find_domain_buyers.py aiautomation.com --keyword "ai automation" [--json]
+```
+
 ## Maintenance
 
 Recalculate stored decision-maker authority scores after changing
