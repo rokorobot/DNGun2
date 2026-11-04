@@ -39,3 +39,15 @@ signals:
     name: Company size fit
     tier: 3
     category: icp_fit
+  - code: buys_ads_on_offer_keyword
+    name: Buys ads on offer keyword
+    tier: 1
+    category: domain_buyer_intent
+  - code: ranks_for_offer_keyword
+    name: Ranks for offer keyword
+    tier: 2
+    category: domain_buyer_intent
+  - code: brand_overlaps_offer_keyword
+    name: Brand overlaps offer keyword
+    tier: 2
+    category: domain_buyer_intent

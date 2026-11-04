@@ -41,14 +41,28 @@ python backend/scripts/seed_mvp0.py
 ## Find buyers for a domain (treg)
 
 Ranks companies that buy Google Ads on, or rank organically for, a domain's
-keyword. It pulls live data through [treg](https://treg.to) and needs
-`TREG_TOKEN` in the environment or the repo-root `.env`. It only reads data
-and writes nothing to the database. Each keyword costs about $0.02–0.04.
+keywords. It pulls live data through [treg](https://treg.to) and needs
+`TREG_TOKEN` in the environment or the repo-root `.env`. Each searched keyword
+costs about $0.02–0.04. `--dry-run` prints the cost estimate.
 
 ```sh
-python backend/scripts/find_domain_buyers.py aiautomation.com --keyword "ai automation" --dry-run
-python backend/scripts/find_domain_buyers.py aiautomation.com --keyword "ai automation" [--json]
+python backend/scripts/find_domain_buyers.py aiautomation.com                       # keyword derived: "ai automation"
+python backend/scripts/find_domain_buyers.py aiautomation.com -k "ai automation, ai agents" --expand 3
+python backend/scripts/find_domain_buyers.py aiautomation.com --no-big-advertisers  # drop >= $100k/mo spenders
+python backend/scripts/find_domain_buyers.py aiautomation.com --save 10 --segment AI_AUTOMATION
 ```
+
+- `-k/--keyword` can be repeated and accepts comma-separated phrases. Without
+  it, the domain is split into words using Google's own keyword data.
+- `--expand N` also searches the N related keywords with the highest
+  volume × CPC.
+- `--big-advertisers` / `--no-big-advertisers` keeps or drops advertisers
+  spending at least `--big-budget` dollars a month (default 100,000). By
+  default they are kept.
+- `--save N` creates the top N candidates as prospects. It reuses prospects
+  that already exist. It attaches the ad, ranking, and brand evidence as
+  pending signal suggestions. Review them with `suggest_signals.py` (below).
+  Without `--save`, nothing is written.
 
 ## Suggest signals for a prospect (treg)
 

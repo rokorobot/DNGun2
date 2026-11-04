@@ -15,12 +15,17 @@ from urllib.parse import urlparse
 from .treg_client import TregClient, TregError
 
 VOLUME_ENDPOINT = "treg.google.keywords.volume"
+IDEAS_ENDPOINT = "treg.google.keywords.ideas"
 # SerpApi returns both the ad units and organic results; litescrape (cheaper) returned no ads in testing.
 SERP_ENDPOINT = "serpapi.x.google-ads"
 OVERVIEW_ENDPOINT = "spyfu.google.domain.overview"
 
-# Approximate per-call USD from the public treg catalog (2026-11); used for the dry-run estimate only.
-EST_USD = {VOLUME_ENDPOINT: 0.0018, SERP_ENDPOINT: 0.015, OVERVIEW_ENDPOINT: 0.001}
+# Approximate USD from the public treg catalog (2026-11); used for the dry-run estimate only.
+# Keyword volume bills per keyword.
+EST_USD = {VOLUME_ENDPOINT: 0.0018, IDEAS_ENDPOINT: 0.001, SERP_ENDPOINT: 0.015, OVERVIEW_ENDPOINT: 0.001}
+MAX_IDEA_CANDIDATES = 15  # related keywords priced per expansion seed before picking the best
+MAX_SPLITS = 12  # two-word splits of an unsegmented stem checked for search volume
+DEFAULT_BIG_BUDGET = 100_000  # monthly Google Ads $ above which an advertiser counts as a big brand
 
 # Platforms that rank for everything and never buy a niche domain.
 EXCLUDED_DOMAINS = {
@@ -38,6 +43,7 @@ class Candidate:
     ad_hits: list[tuple[str, int]] = field(default_factory=list)  # (keyword, ad position)
     organic_hits: list[tuple[str, int]] = field(default_factory=list)  # (keyword, rank)
     titles: list[str] = field(default_factory=list)
+    names: list[str] = field(default_factory=list)  # advertiser / site names Google shows
     monthly_ad_budget: float | None = None
     monthly_organic_clicks: float | None = None
     score: int = 0
@@ -46,6 +52,7 @@ class Candidate:
     def as_dict(self) -> dict[str, Any]:
         return {
             "domain": self.domain,
+            "name": self.names[0] if self.names else None,
             "score": self.score,
             "reasons": self.reasons,
             "ad_hits": self.ad_hits,
@@ -67,9 +74,21 @@ def normalize_domain(value: str) -> str:
 
 
 def keywords_for_domain(domain: str) -> list[str]:
+    """Offline guess: the domain stem with separators turned into spaces."""
     stem = normalize_domain(domain).split(".")[0]
     phrase = " ".join(part for part in re.split(r"[^a-z0-9]+", stem) if part)
     return [phrase] if phrase else []
+
+
+def split_keywords(values: list[str] | None) -> list[str]:
+    """Accept repeated and comma-separated --keyword values; lowercase and dedupe, keeping order."""
+    seen: dict[str, None] = {}
+    for value in values or []:
+        for part in value.split(","):
+            phrase = " ".join(part.lower().split())
+            if phrase:
+                seen.setdefault(phrase, None)
+    return list(seen)
 
 
 def find_domain_buyers(
@@ -80,31 +99,44 @@ def find_domain_buyers(
     location: str = "United States",
     country: str = "us",
     enrich_top: int = 10,
+    expand: int = 0,
+    big_budget: float | None = None,
 ) -> dict[str, Any]:
+    """Rank buyer candidates. `expand` adds that many related high-value keywords; `big_budget`
+    drops advertisers whose monthly Google Ads spend is at or above it (None keeps everyone)."""
     offered = normalize_domain(domain)
-    keywords = keywords or keywords_for_domain(offered)
     warnings: list[str] = []
+    keywords = split_keywords(keywords) or derive_keywords(client, offered, country, warnings)
+
+    ideas: list[str] = []
+    if expand > 0:
+        for keyword in keywords:
+            ideas += [idea for idea in related_keywords(client, keyword, country, warnings)
+                      if idea not in keywords and idea not in ideas]
+        ideas = ideas[:MAX_IDEA_CANDIDATES]
 
     metrics: dict[str, dict[str, Any]] = {}
     try:
         metrics = parse_keyword_metrics(
             client.call(VOLUME_ENDPOINT, method="POST",
-                        body={"keywords": keywords, "country": country, "language": "en"})
+                        body={"keywords": keywords + ideas, "country": country, "language": "en"})
         )
     except TregError as error:
         warnings.append(str(error))
+    expansions = pick_expansions(ideas, metrics, expand)
+    searched = keywords + expansions
 
     candidates: dict[str, Candidate] = {}
-    for keyword in keywords:
+    for keyword in searched:
         try:
             serp = client.call(SERP_ENDPOINT, query={"engine": "google_ads", "q": keyword, "location": location,
-                                       "gl": country, "hl": "en"})
+                                                     "gl": country, "hl": "en"})
         except TregError as error:
             warnings.append(str(error))
             continue
         collect_serp(serp, keyword, offered, candidates)
 
-    ranked = rank_candidates(list(candidates.values()), keywords)
+    ranked = rank_candidates(list(candidates.values()), searched)
     for candidate in ranked[:enrich_top]:
         try:
             overview = client.call(OVERVIEW_ENDPOINT,
@@ -114,22 +146,100 @@ def find_domain_buyers(
             warnings.append(str(error))
             continue
         apply_overview(candidate, overview)
-    ranked = rank_candidates(ranked, keywords)
+    ranked = rank_candidates(ranked, searched)
+
+    excluded = []
+    if big_budget is not None:
+        excluded = [c for c in ranked if (c.monthly_ad_budget or 0) >= big_budget]
+        ranked = [c for c in ranked if c not in excluded]
 
     return {
         "domain": offered,
         "keywords": keywords,
-        "keyword_metrics": metrics,
+        "expanded_keywords": expansions,
+        "keyword_metrics": {k: metrics[k] for k in searched if k in metrics},
         "candidates": [c.as_dict() for c in ranked],
+        "excluded_big_advertisers": [
+            {"domain": c.domain, "monthly_ad_budget": c.monthly_ad_budget} for c in excluded],
         "calls": client.calls,
         "spent_usd": round(client.spent_usd, 6),
         "warnings": warnings,
     }
 
 
-def estimate_cost(keyword_count: int, enrich_top: int) -> float:
-    return (EST_USD[VOLUME_ENDPOINT] + keyword_count * EST_USD[SERP_ENDPOINT]
-            + enrich_top * EST_USD[OVERVIEW_ENDPOINT])
+def derive_keywords(client: TregClient, offered: str, country: str, warnings: list[str]) -> list[str]:
+    """Turn the domain stem into a search phrase: 'aiautomation' -> 'ai automation'.
+
+    1. Google keyword ideas for the stem; an idea that equals the stem once spaces are removed
+       is the segmentation Google itself uses.
+    2. Otherwise price every two-word split and keep the one people search most.
+    3. Otherwise fall back to the stem with separators replaced by spaces.
+    """
+    fallback = keywords_for_domain(offered)
+    if not fallback:
+        return []
+    phrase = fallback[0]
+    if " " in phrase:
+        return fallback
+    for idea in related_keywords(client, phrase, country, warnings, on_topic=False):
+        if " " in idea and idea.replace(" ", "") == phrase:
+            return [idea]
+    splits = [f"{phrase[:i]} {phrase[i:]}" for i in range(2, len(phrase) - 1)][:MAX_SPLITS]
+    if not splits:
+        return fallback
+    try:
+        metrics = parse_keyword_metrics(client.call(
+            VOLUME_ENDPOINT, method="POST",
+            body={"keywords": [phrase] + splits, "country": country, "language": "en"}))
+    except TregError as error:
+        warnings.append(str(error))
+        return fallback
+    best = max([phrase] + splits, key=lambda k: (metrics.get(k) or {}).get("volume") or 0)
+    return [best] if (metrics.get(best) or {}).get("volume") else fallback
+
+
+def related_keywords(client: TregClient, keyword: str, country: str, warnings: list[str],
+                     *, on_topic: bool = True) -> list[str]:
+    """Google keyword ideas for a seed. With on_topic, keep only ideas containing every seed word."""
+    try:
+        payload = client.call(IDEAS_ENDPOINT, method="POST",
+                              body={"keyword": keyword, "country": country, "language": "en", "limit": 30})
+    except TregError as error:
+        warnings.append(str(error))
+        return []
+    output = payload.get("output") if isinstance(payload, dict) else None
+    rows = (output or {}).get("keywords") or []
+    words = keyword.lower().split()
+    ideas: list[str] = []
+    for row in rows:
+        idea = row if isinstance(row, str) else (_first(row, "value", "keyword", "phrase", "text")
+                                                 if isinstance(row, dict) else None)
+        if not isinstance(idea, str):
+            continue
+        idea = " ".join(idea.lower().split())
+        if idea and idea != keyword.lower() and idea not in ideas and (
+                not on_topic or all(word in idea.split() for word in words)):
+            ideas.append(idea)
+    return ideas
+
+
+def pick_expansions(ideas: list[str], metrics: dict[str, dict[str, Any]], count: int) -> list[str]:
+    """Most commercially valuable ideas: monthly volume x CPC, skipping ones nobody pays for."""
+    def value(idea: str) -> float:
+        metric = metrics.get(idea) or {}
+        return (metric.get("volume") or 0) * (metric.get("cpc") or 0)
+    return [idea for idea in sorted(ideas, key=value, reverse=True) if value(idea) > 0][:count]
+
+
+def estimate_cost(keyword_count: int, enrich_top: int, expand: int = 0, derive: bool = False) -> float:
+    volume_rows = keyword_count + (MAX_IDEA_CANDIDATES if expand else 0)
+    cost = volume_rows * EST_USD[VOLUME_ENDPOINT] + enrich_top * EST_USD[OVERVIEW_ENDPOINT]
+    cost += (keyword_count + expand) * EST_USD[SERP_ENDPOINT]
+    if expand:
+        cost += keyword_count * EST_USD[IDEAS_ENDPOINT]
+    if derive:
+        cost += EST_USD[IDEAS_ENDPOINT] + (MAX_SPLITS + 1) * EST_USD[VOLUME_ENDPOINT]
+    return cost
 
 
 def parse_keyword_metrics(payload: Any) -> dict[str, dict[str, Any]]:
@@ -249,6 +359,10 @@ def _add_title(candidate: Candidate, result: dict) -> None:
     title = result.get("title")
     if isinstance(title, str) and title not in candidate.titles:
         candidate.titles.append(title)
+    name = result.get("source")
+    if isinstance(name, str) and name.strip() and not name.startswith(("›", "http")) \
+            and name not in candidate.names:
+        candidate.names.append(name.strip())
 
 
 def _first(row: dict, *keys: str) -> Any:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
+from urllib.parse import quote_plus
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,7 +18,7 @@ from sqlalchemy.orm import Session
 from . import models
 from .domain_buyers import normalize_domain
 from .repository import Repository, prefixed_id
-from .schemas import Prospect, SignalCreate, utc_now_iso
+from .schemas import Prospect, ProspectCreate, SignalCreate, utc_now_iso
 from .treg_client import TregClient, TregError
 
 # Endpoint ids are treg's routed capabilities: treg tries providers cheapest-first.
@@ -189,6 +190,57 @@ def suggest_founder_topics(output: dict, prospect: Prospect) -> list[dict]:
                                        f"{len(posts)} recent post(s); e.g. “{excerpt}”",
                                        observed_at=posted))
     return suggestions
+
+
+# --- domain buyers → prospects ----------------------------------------------------------------
+
+def buyer_suggestions(candidate: dict, offered: str) -> list[dict]:
+    """Evidence from find_domain_buyers for one candidate, as pending signals."""
+    suggestions = []
+    budget = candidate.get("monthly_ad_budget")
+    budget_note = f"; est. Google Ads budget ${budget:,.0f}/mo" if budget else ""
+    if candidate.get("ad_hits"):
+        keyword, position = min(candidate["ad_hits"], key=lambda hit: hit[1])
+        suggestions.append(_suggestion(
+            "Buys ads on offer keyword", 1, 5 if position <= 3 else 4, _google_url(keyword),
+            f"Google Ads slot #{position} for '{keyword}' (offer {offered}){budget_note}"))
+    if candidate.get("organic_hits"):
+        keyword, position = min(candidate["organic_hits"], key=lambda hit: hit[1])
+        suggestions.append(_suggestion(
+            "Ranks for offer keyword", 2, 5 if position <= 3 else 4 if position <= 10 else 2,
+            _google_url(keyword), f"Organic #{position} for '{keyword}' (offer {offered})"))
+    for reason in candidate.get("reasons") or []:
+        if reason.startswith(("Brand overlaps", "Brand partially")):
+            suggestions.append(_suggestion(
+                "Brand overlaps offer keyword", 2, 4 if reason.startswith("Brand overlaps") else 2,
+                f"https://{candidate['domain']}", f"{reason} (offer {offered})"))
+    return suggestions
+
+
+def save_buyer_prospects(session: Session, result: dict, segment: str, top: int) -> list[dict]:
+    """Create the top candidates as prospects (skipping domains already in DNGun) and attach
+    their buyer evidence as PENDING suggestions. Returns one summary row per candidate."""
+    repository = Repository(session)
+    existing = {normalize_domain(p.website): p.id for p in session.scalars(select(models.ProspectModel))
+                if p.website}
+    rows = []
+    for candidate in [c for c in result["candidates"] if c["score"] > 0][:top]:
+        domain = candidate["domain"]
+        prospect_id = existing.get(domain)
+        created = prospect_id is None
+        if created:
+            prospect_id = repository.create_prospect(ProspectCreate(
+                company_name=candidate.get("name") or domain, website=f"https://{domain}",
+                segment=segment)).id
+            existing[domain] = prospect_id
+        saved = save_suggestions(session, prospect_id, buyer_suggestions(candidate, result["domain"]))
+        rows.append({"domain": domain, "prospect_id": prospect_id, "created": created,
+                     "suggestions": len(saved)})
+    return rows
+
+
+def _google_url(keyword: str) -> str:
+    return "https://www.google.com/search?q=" + quote_plus(keyword)
 
 
 # --- persistence & review ----------------------------------------------------------------------

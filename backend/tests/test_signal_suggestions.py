@@ -107,3 +107,43 @@ def test_suggest_store_dedupe_and_review(tmp_path, capsys):
     statuses = {t: r.status for t, r in _pending(db).items()}
     assert statuses["Hiring SDR"] == "APPROVED" and statuses["Company size fit"] == "REJECTED"
     assert len(statuses) == 6
+
+
+def test_save_domain_buyers_as_prospects(tmp_path):
+    from backend.scripts.find_domain_buyers import main as find_main
+
+    db, api, existing_id = _prospect(tmp_path)  # acme.io already exists
+    serp = {"ads": [{"position": 2, "link": "https://acme.io/lp", "source": "Acme"},
+                    {"position": 1, "link": "https://ai-automation-pros.com", "source": "AI Automation Pros"}],
+            "organic_results": [{"position": 4, "link": "https://acme.io/blog", "title": "Acme blog"}]}
+
+    class BuyerClient(FakeClient):
+        def call(self, endpoint_id, *, method="GET", query=None, body=None):
+            self.calls += 1
+            return {"treg.google.keywords.volume": {"output": {"rows": []}},
+                    "serpapi.x.google-ads": serp,
+                    "spyfu.google.domain.overview": {"results": [{"monthlyBudget": 1200}]}}[endpoint_id]
+
+    argv = ["aiautomation.com", "-k", "ai automation", "--save", "5", "--segment", "AI_AUTOMATION", "--json"]
+    assert find_main(argv, db_path=db, client=BuyerClient()) == 0
+
+    prospects = {p["website"]: p for p in api.get("/prospects").json()}
+    assert prospects["https://ai-automation-pros.com"]["company_name"] == "AI Automation Pros"
+    assert len(prospects) == 2  # acme.io reused, not duplicated
+    rows = _pending(db)
+    assert rows["Buys ads on offer keyword"].tier == 1
+    assert rows["Ranks for offer keyword"].prospect_id == existing_id
+    assert "aiautomation.com" in rows["Brand overlaps offer keyword"].notes
+
+    # Saving again adds no duplicates.
+    assert find_main(argv, db_path=db, client=BuyerClient()) == 0
+    session = create_session_factory(db)()
+    assert session.query(models.SignalSuggestionModel).count() == 4
+    session.close()
+
+
+def test_save_requires_known_segment(tmp_path):
+    from backend.scripts.find_domain_buyers import main as find_main
+
+    db, _, _ = _prospect(tmp_path)
+    assert find_main(["x.com", "-k", "x", "--save", "1", "--segment", "NOPE"], db_path=db, client=FakeClient()) == 2
