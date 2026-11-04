@@ -549,3 +549,25 @@ class HypothesisAuditEventModel(Base):
     )
 
 
+
+
+class SignalSuggestionModel(Base):
+    """A signal proposed from external data (treg); becomes a real signal only when approved."""
+
+    __tablename__ = "signal_suggestions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    prospect_id: Mapped[str] = mapped_column(
+        ForeignKey("prospects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    signal_type: Mapped[str] = mapped_column(String, nullable=False)
+    tier: Mapped[int] = mapped_column(Integer, nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_url: Mapped[str | None] = mapped_column(String)
+    observed_at: Mapped[str] = mapped_column(String, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    provider: Mapped[str | None] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="PENDING")
+    signal_id: Mapped[str | None] = mapped_column(ForeignKey("signals.id", ondelete="SET NULL"))
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    reviewed_at: Mapped[str | None] = mapped_column(String)

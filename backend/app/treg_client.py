@@ -70,6 +70,8 @@ class TregClient:
             raise TregError(endpoint_id, error.code, _error_message(error)) from None
         except urllib.error.URLError as error:
             raise TregError(endpoint_id, None, str(error.reason)) from None
+        except (TimeoutError, OSError) as error:
+            raise TregError(endpoint_id, None, f"network error: {error}") from None
         try:
             return json.loads(raw) if raw else None
         except json.JSONDecodeError:

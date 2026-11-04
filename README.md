@@ -50,6 +50,20 @@ python backend/scripts/find_domain_buyers.py aiautomation.com --keyword "ai auto
 python backend/scripts/find_domain_buyers.py aiautomation.com --keyword "ai automation" [--json]
 ```
 
+## Suggest signals for a prospect (treg)
+
+Looks up a prospect's company size, sales hiring, recent launches, website
+authority, founder email, and founder LinkedIn posts. It stores what it finds
+as **pending** suggestions. A suggestion becomes a scored signal only after you
+approve it. Rejected suggestions are not proposed again. A lookup costs up to
+about $0.12 per prospect, usually around $0.05.
+
+```sh
+python backend/scripts/suggest_signals.py <prospect_id> [--dry-run]
+python backend/scripts/suggest_signals.py --list [<prospect_id>]
+python backend/scripts/suggest_signals.py --approve <SS-id> ... | --reject <SS-id> ...
+```
+
 ## Maintenance
 
 Recalculate stored decision-maker authority scores after changing
