@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -14,10 +15,11 @@ from .learning import (
     calculate_signal_performance,
     render_learning_markdown,
 )
+from .hypothesis_generator import generate_acquisition_hypothesis, select_cited_evidence
 from .offer_intelligence import generate_offer_hypothesis
 from .offer_fit import calculate_offer_prospect_fit
 from .offer_llm import DEFAULT_MODEL, generate_llm_offer_evaluation
-from .repository import Repository, RepositoryConflictError
+from .repository import HypothesisGovernanceError, Repository, RepositoryConflictError
 from .reporting import (
     build_campaign_intelligence_report,
     render_campaign_intelligence_markdown,
@@ -25,6 +27,16 @@ from .reporting import (
 from .authority_engine import AuthorityScoringEngine
 from .rules import RuleRegistry, RuleRegistryError
 from .schemas import (
+    AcquisitionHypothesis,
+    AcquisitionHypothesisDetail,
+    HypothesisApproval,
+    HypothesisCreate,
+    HypothesisDraftUpdate,
+    HypothesisEvidenceLinkCreate,
+    HypothesisGenerateRequest,
+    HypothesisRejection,
+    HypothesisSource,
+    HypothesisSupersede,
     AlphaSignal,
     AlphaSignalCreate,
     CampaignBatch,
@@ -660,6 +672,231 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         require_offer(repository, offer_id)
         return repository.list_offer_prospect_fits(offer_id)
 
+    # ------------------------------------------------------------------
+    # Acquisition hypotheses (MVP 1.3A-3). Every rule lives in the
+    # repository; routes only resolve 404s and map governance errors to 409.
+    # ------------------------------------------------------------------
+
+    @app.post(
+        "/offers/{offer_id}/prospects/{prospect_id}/hypotheses",
+        response_model=AcquisitionHypothesis,
+        status_code=201,
+    )
+    def create_hypothesis(
+        offer_id: str,
+        prospect_id: str,
+        data: HypothesisCreate,
+        repository: Repository = Depends(get_repository),
+    ) -> AcquisitionHypothesis:
+        require_offer(repository, offer_id)
+        require_prospect(repository, prospect_id)
+        require_hypothesis_refs(repository, data.decision_maker_id, data.refines_hypothesis_id)
+        model = governed(
+            lambda: repository.create_hypothesis(
+                offer_id,
+                prospect_id,
+                data.statement,
+                HypothesisSource.HUMAN.value,
+                decision_maker_id=data.decision_maker_id,
+                refines_hypothesis_id=data.refines_hypothesis_id,
+                recipient_framing=data.recipient_framing,
+            )
+        )
+        return hypothesis_read(model)
+
+    @app.post(
+        "/offers/{offer_id}/prospects/{prospect_id}/hypotheses/generate",
+        response_model=AcquisitionHypothesisDetail,
+        status_code=201,
+    )
+    def generate_hypothesis(
+        offer_id: str,
+        prospect_id: str,
+        data: HypothesisGenerateRequest | None = None,
+        repository: Repository = Depends(get_repository),
+    ) -> AcquisitionHypothesisDetail:
+        data = data or HypothesisGenerateRequest()
+        offer = require_offer(repository, offer_id)
+        prospect = require_prospect(repository, prospect_id)
+        require_hypothesis_refs(repository, data.decision_maker_id, data.refines_hypothesis_id)
+        profile = repository.get_offer_intelligence_profile(offer_id)
+        if profile is None:
+            raise HTTPException(status_code=409, detail="Approved offer profile required")
+        segment = repository.get_segment_by_code(prospect.segment)
+        cited = select_cited_evidence(
+            repository.list_evidence_entries(),
+            offer_id=offer_id,
+            prospect_pdm_code=segment.pdm_code if segment else None,
+        )
+        draft = generate_acquisition_hypothesis(
+            offer_id=offer_id,
+            offer_name=offer.name,
+            offer_category=profile.profile.offer_category,
+            commercial_hypothesis=profile.profile.commercial_hypothesis,
+            company_name=prospect.company_name,
+            segment=prospect.segment,
+            signals=repository.list_signals(prospect_id),
+            cited_evidence=cited,
+            decision_maker=(
+                repository.get_decision_maker(data.decision_maker_id)
+                if data.decision_maker_id
+                else None
+            ),
+        )
+        model = governed(
+            lambda: repository.create_hypothesis(
+                offer_id,
+                prospect_id,
+                draft["statement"],
+                HypothesisSource.DETERMINISTIC.value,
+                decision_maker_id=data.decision_maker_id,
+                refines_hypothesis_id=data.refines_hypothesis_id,
+                recipient_framing=draft["recipient_framing"],
+                provider="deterministic",
+            )
+        )
+        for evidence_entry_id, note in draft["evidence_links"]:
+            governed(lambda: repository.attach_evidence(model.id, evidence_entry_id, note))
+        return hypothesis_detail(repository, model)
+
+    @app.get(
+        "/offers/{offer_id}/prospects/{prospect_id}/hypotheses",
+        response_model=list[AcquisitionHypothesis],
+    )
+    def list_hypotheses(
+        offer_id: str,
+        prospect_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> list[AcquisitionHypothesis]:
+        require_offer(repository, offer_id)
+        require_prospect(repository, prospect_id)
+        return [hypothesis_read(m) for m in repository.list_hypotheses(offer_id, prospect_id)]
+
+    @app.get("/hypotheses/{hypothesis_id}", response_model=AcquisitionHypothesisDetail)
+    def get_hypothesis(
+        hypothesis_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> AcquisitionHypothesisDetail:
+        return hypothesis_detail(repository, require_hypothesis(repository, hypothesis_id))
+
+    @app.put("/hypotheses/{hypothesis_id}", response_model=AcquisitionHypothesis)
+    def update_hypothesis(
+        hypothesis_id: str,
+        data: HypothesisDraftUpdate,
+        repository: Repository = Depends(get_repository),
+    ) -> AcquisitionHypothesis:
+        require_hypothesis(repository, hypothesis_id)
+        changes = {field: getattr(data, field) for field in data.model_fields_set}
+        if changes.get("statement", "") is None:
+            raise HTTPException(status_code=422, detail="Hypothesis statement must not be null")
+        model = governed(lambda: repository.update_draft_hypothesis(hypothesis_id, **changes))
+        return hypothesis_read(model)
+
+    @app.post(
+        "/hypotheses/{hypothesis_id}/evidence/{evidence_entry_id}",
+        response_model=AcquisitionHypothesisDetail,
+        status_code=201,
+    )
+    def attach_hypothesis_evidence(
+        hypothesis_id: str,
+        evidence_entry_id: str,
+        data: HypothesisEvidenceLinkCreate | None = None,
+        repository: Repository = Depends(get_repository),
+    ) -> AcquisitionHypothesisDetail:
+        model = require_hypothesis(repository, hypothesis_id)
+        require_evidence_entry(repository, evidence_entry_id)
+        governed(
+            lambda: repository.attach_evidence(
+                hypothesis_id, evidence_entry_id, data.note if data else None
+            )
+        )
+        return hypothesis_detail(repository, model)
+
+    @app.delete(
+        "/hypotheses/{hypothesis_id}/evidence/{evidence_entry_id}",
+        response_model=AcquisitionHypothesisDetail,
+    )
+    def detach_hypothesis_evidence(
+        hypothesis_id: str,
+        evidence_entry_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> AcquisitionHypothesisDetail:
+        model = require_hypothesis(repository, hypothesis_id)
+        governed(lambda: repository.detach_evidence(hypothesis_id, evidence_entry_id))
+        return hypothesis_detail(repository, model)
+
+    @app.post("/hypotheses/{hypothesis_id}/propose", response_model=AcquisitionHypothesisDetail)
+    def propose_hypothesis(
+        hypothesis_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> AcquisitionHypothesisDetail:
+        require_hypothesis(repository, hypothesis_id)
+        model = governed(lambda: repository.propose_hypothesis(hypothesis_id))
+        return hypothesis_detail(repository, model)
+
+    @app.post("/hypotheses/{hypothesis_id}/approve", response_model=AcquisitionHypothesisDetail)
+    def approve_hypothesis(
+        hypothesis_id: str,
+        data: HypothesisApproval | None = None,
+        repository: Repository = Depends(get_repository),
+    ) -> AcquisitionHypothesisDetail:
+        require_hypothesis(repository, hypothesis_id)
+        data = data or HypothesisApproval()
+        model = governed(
+            lambda: repository.approve_hypothesis(
+                hypothesis_id,
+                reviewer_assessment=(
+                    data.reviewer_assessment.value if data.reviewer_assessment else None
+                ),
+                review_notes=data.review_notes,
+            )
+        )
+        return hypothesis_detail(repository, model)
+
+    @app.post("/hypotheses/{hypothesis_id}/reject", response_model=AcquisitionHypothesisDetail)
+    def reject_hypothesis(
+        hypothesis_id: str,
+        data: HypothesisRejection | None = None,
+        repository: Repository = Depends(get_repository),
+    ) -> AcquisitionHypothesisDetail:
+        require_hypothesis(repository, hypothesis_id)
+        model = governed(
+            lambda: repository.reject_hypothesis(
+                hypothesis_id, review_notes=data.review_notes if data else None
+            )
+        )
+        return hypothesis_detail(repository, model)
+
+    @app.post("/hypotheses/{hypothesis_id}/activate", response_model=AcquisitionHypothesisDetail)
+    def activate_hypothesis(
+        hypothesis_id: str,
+        repository: Repository = Depends(get_repository),
+    ) -> AcquisitionHypothesisDetail:
+        require_hypothesis(repository, hypothesis_id)
+        model = governed(lambda: repository.activate_hypothesis(hypothesis_id))
+        return hypothesis_detail(repository, model)
+
+    @app.post(
+        "/hypotheses/{hypothesis_id}/supersede",
+        response_model=AcquisitionHypothesisDetail,
+        status_code=201,
+    )
+    def supersede_hypothesis(
+        hypothesis_id: str,
+        data: HypothesisSupersede | None = None,
+        repository: Repository = Depends(get_repository),
+    ) -> AcquisitionHypothesisDetail:
+        require_hypothesis(repository, hypothesis_id)
+        data = data or HypothesisSupersede()
+        successor = governed(
+            lambda: repository.supersede_hypothesis(
+                hypothesis_id,
+                statement=data.statement,
+                recipient_framing=data.recipient_framing,
+            )
+        )
+        return hypothesis_detail(repository, successor)
+
     return app
 
 
@@ -696,6 +933,78 @@ def require_offer(repository: Repository, offer_id: str) -> Offer:
     if offer is None:
         raise HTTPException(status_code=404, detail="Offer not found")
     return offer
+
+
+def require_hypothesis(repository: Repository, hypothesis_id: str):
+    model = repository.get_hypothesis(hypothesis_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail="Hypothesis not found")
+    return model
+
+
+def require_hypothesis_refs(
+    repository: Repository,
+    decision_maker_id: str | None,
+    refines_hypothesis_id: str | None,
+) -> None:
+    if decision_maker_id and repository.get_decision_maker(decision_maker_id) is None:
+        raise HTTPException(status_code=404, detail="Decision maker not found")
+    if refines_hypothesis_id:
+        require_hypothesis(repository, refines_hypothesis_id)
+
+
+def governed(operation):
+    """Run a governed repository call; contract violations become 409s."""
+    try:
+        return operation()
+    except (HypothesisGovernanceError, RepositoryConflictError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+def hypothesis_read(model) -> AcquisitionHypothesis:
+    data = {
+        field: getattr(model, field)
+        for field in AcquisitionHypothesis.model_fields
+        if field != "reasoning_confidence_explanation"
+    }
+    data["reasoning_confidence_explanation"] = json.loads(
+        model.reasoning_confidence_explanation or "[]"
+    )
+    return AcquisitionHypothesis(**data)
+
+
+def hypothesis_detail(repository: Repository, model) -> AcquisitionHypothesisDetail:
+    repository.session.refresh(model)
+    parent = (
+        repository.get_hypothesis(model.refines_hypothesis_id)
+        if model.refines_hypothesis_id
+        else None
+    )
+    return AcquisitionHypothesisDetail(
+        **hypothesis_read(model).model_dump(),
+        evidence_links=[
+            {
+                "id": link.id,
+                "hypothesis_id": link.hypothesis_id,
+                "evidence_entry_id": link.evidence_entry_id,
+                "note": link.note,
+                "created_at": link.created_at,
+                "evidence": EvidenceEntry.model_validate(link.evidence_entry),
+            }
+            for link in repository.list_hypothesis_evidence_links(model.id)
+        ],
+        audit_events=[
+            {
+                "id": event.id,
+                "hypothesis_id": event.hypothesis_id,
+                "event_type": event.event_type,
+                "detail": json.loads(event.detail or "{}"),
+                "created_at": event.created_at,
+            }
+            for event in repository.list_hypothesis_audit_events(model.id)
+        ],
+        parent=hypothesis_read(parent) if parent else None,
+    )
 
 
 def _deterministic_offer_proposal(domain_name: str) -> dict:

@@ -71,3 +71,19 @@ GET /rules/alpha-signals
 GET /rules/signal-taxonomy
 GET /rules/disqualifiers
 ```
+
+Acquisition hypothesis endpoints (MVP 1.3A-3; contract in
+`docs/MVP13AcquisitionHypothesisScoping.md`). Governance violations
+return `409`; request bodies cannot set status, confidence, source, or
+activation:
+
+```text
+POST   /offers/{offer_id}/prospects/{prospect_id}/hypotheses           create DRAFT (HUMAN)
+POST   /offers/{offer_id}/prospects/{prospect_id}/hypotheses/generate  deterministic DRAFT
+GET    /offers/{offer_id}/prospects/{prospect_id}/hypotheses           list
+GET    /hypotheses/{id}                                                detail + evidence + audit + parent
+PUT    /hypotheses/{id}                                                DRAFT only
+POST   /hypotheses/{id}/evidence/{evidence_entry_id}                   link (DRAFT, ACTIVE evidence)
+DELETE /hypotheses/{id}/evidence/{evidence_entry_id}                   unlink (DRAFT)
+POST   /hypotheses/{id}/propose | approve | reject | activate | supersede
+```

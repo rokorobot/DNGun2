@@ -828,6 +828,12 @@ class Repository:
         if self.session.get(models.ProspectModel, prospect_id) is None:
             raise HypothesisGovernanceError(f"Prospect not found: {prospect_id}")
         if decision_maker_id is not None:
+            # Invariant 5: a decision-maker hypothesis refines a company-level
+            # parent; it never stands alone.
+            if refines_hypothesis_id is None:
+                raise HypothesisGovernanceError(
+                    "A decision-maker hypothesis must declare the hypothesis it refines"
+                )
             decision_maker = self.session.get(models.DecisionMakerModel, decision_maker_id)
             if decision_maker is None or decision_maker.prospect_id != prospect_id:
                 raise HypothesisGovernanceError(

@@ -257,6 +257,7 @@ class EvidenceEntryCreate(BaseModel):
 
 class EvidenceEntry(ApiModel, EvidenceEntryCreate):
     id: str
+    status: EvidenceStatus = EvidenceStatus.ACTIVE
     created_at: str
 
 
@@ -536,3 +537,95 @@ class ContactPath(ApiModel, ContactPathCreate):
     created_at: str
 
 
+
+
+# ---------------------------------------------------------------------------
+# Acquisition hypotheses (MVP 1.3A-3). Request bodies forbid extra fields so
+# status, confidence, source, and activation can never be set by payload.
+# ---------------------------------------------------------------------------
+
+
+class StrictRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class HypothesisCreate(StrictRequest):
+    statement: str = Field(min_length=1)
+    recipient_framing: str | None = None
+    decision_maker_id: str | None = None
+    refines_hypothesis_id: str | None = None
+
+
+class HypothesisDraftUpdate(StrictRequest):
+    statement: str | None = Field(default=None, min_length=1)
+    recipient_framing: str | None = None
+
+
+class HypothesisGenerateRequest(StrictRequest):
+    decision_maker_id: str | None = None
+    refines_hypothesis_id: str | None = None
+
+
+class HypothesisEvidenceLinkCreate(StrictRequest):
+    note: str | None = None
+
+
+class HypothesisApproval(StrictRequest):
+    reviewer_assessment: ReviewerAssessment | None = None
+    review_notes: str | None = None
+
+
+class HypothesisRejection(StrictRequest):
+    review_notes: str | None = None
+
+
+class HypothesisSupersede(StrictRequest):
+    statement: str | None = Field(default=None, min_length=1)
+    recipient_framing: str | None = None
+
+
+class AcquisitionHypothesis(ApiModel):
+    id: str
+    offer_id: str
+    prospect_id: str
+    decision_maker_id: str | None
+    refines_hypothesis_id: str | None
+    statement: str
+    recipient_framing: str | None
+    source: HypothesisSource
+    provider: str | None
+    model: str | None
+    status: HypothesisStatus
+    is_active: bool
+    reasoning_confidence: int | None
+    reasoning_confidence_explanation: list[str]
+    empirical_confidence: float | None
+    reviewer_assessment: ReviewerAssessment | None
+    superseded_by_id: str | None
+    reviewed_at: str | None
+    review_notes: str | None
+    created_at: str
+    updated_at: str
+
+
+class HypothesisEvidenceLink(ApiModel):
+    id: str
+    hypothesis_id: str
+    evidence_entry_id: str
+    note: str | None
+    created_at: str
+    evidence: EvidenceEntry
+
+
+class HypothesisAuditEvent(ApiModel):
+    id: str
+    hypothesis_id: str
+    event_type: str
+    detail: dict
+    created_at: str
+
+
+class AcquisitionHypothesisDetail(AcquisitionHypothesis):
+    evidence_links: list[HypothesisEvidenceLink]
+    audit_events: list[HypothesisAuditEvent]
+    parent: AcquisitionHypothesis | None = None
