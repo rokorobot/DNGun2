@@ -201,6 +201,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     def run_signal_suggestions(
         prospect_id: str,
         request: Request,
+        include_email: bool = Query(default=False, description="also find the founder's email (slow, ~30s)"),
         session: Session = Depends(get_session),
     ) -> SignalSuggestionRun:
         """Spends treg credit: looks up the prospect and stores PENDING suggestions.
@@ -210,7 +211,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         require_local_caller(request)
         prospect = require_prospect(Repository(session), prospect_id)
         try:
-            check_budget(session, suggestions.estimate_cost(prospect), prospect_id)
+            check_budget(session, suggestions.estimate_cost(prospect, include_email), prospect_id)
         except BudgetError as error:
             raise HTTPException(status_code=429, detail=str(error))
         try:
@@ -219,7 +220,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=503, detail="TREG_TOKEN is not configured on the backend")
         client.timeout = 60
         try:
-            found, warnings = suggestions.gather_suggestions(client, prospect)
+            found, warnings = suggestions.gather_suggestions(client, prospect, include_email)
         finally:
             record_spend(session, "api.suggest", client.calls, client.spent_usd, prospect_id)
         created = suggestions.save_suggestions(session, prospect_id, found)

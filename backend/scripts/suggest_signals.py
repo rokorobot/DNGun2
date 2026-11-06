@@ -40,6 +40,8 @@ def main(argv: list[str] | None = None, db_path: Path | None = None, client: Tre
     parser.add_argument("--list", action="store_true", help="list pending suggestions")
     parser.add_argument("--approve", nargs="+", metavar="ID")
     parser.add_argument("--reject", nargs="+", metavar="ID")
+    parser.add_argument("--email", action="store_true",
+                        help="also look up the founder's work email (slow: up to 30s)")
     parser.add_argument("--ignore-budget", action="store_true",
                         help="skip the daily treg budget and per-prospect cooldown checks")
     args = parser.parse_args(argv)
@@ -68,14 +70,14 @@ def main(argv: list[str] | None = None, db_path: Path | None = None, client: Tre
             print(f"prospect {args.prospect_id} not found", file=sys.stderr)
             return 2
         if args.dry_run:
-            for endpoint, body in planned_lookups(prospect):
+            for endpoint, body in planned_lookups(prospect, args.email):
                 print(f"  {endpoint} {body}")
-            print(f"Max cost: ~${estimate_cost(prospect):.3f}")
+            print(f"Max cost: ~${estimate_cost(prospect, args.email):.3f}")
             return 0
 
         if not args.ignore_budget:
             try:
-                check_budget(session, estimate_cost(prospect), prospect.id)
+                check_budget(session, estimate_cost(prospect, args.email), prospect.id)
             except BudgetError as error:
                 print(error, file=sys.stderr)
                 return 3
@@ -87,7 +89,7 @@ def main(argv: list[str] | None = None, db_path: Path | None = None, client: Tre
                 return 2
             client.timeout = 60
         try:
-            suggestions, warnings = gather_suggestions(client, prospect)
+            suggestions, warnings = gather_suggestions(client, prospect, args.email)
         finally:
             record_spend(session, "cli.suggest", client.calls, client.spent_usd, prospect.id)
         created = save_suggestions(session, prospect.id, suggestions)

@@ -67,7 +67,9 @@ python backend/scripts/find_domain_buyers.py aiautomation.com --save 10 --segmen
 ## Suggest signals for a prospect (treg)
 
 Looks up a prospect's company size, sales hiring, recent launches, website
-authority, founder email, and founder LinkedIn posts. It stores what it finds
+authority, and founder LinkedIn posts. Founder email is opt-in (`--email`, or
+the "+ founder email" checkbox in the UI) because it is slow: about 30s,
+compared with about 10s for the rest. It stores what it finds
 as **pending** suggestions. A suggestion becomes a scored signal only after you
 approve it. Rejected suggestions are not proposed again. A lookup costs up to
 about $0.12 per prospect, usually around $0.05.
@@ -80,7 +82,7 @@ repo-root `.env`. API endpoints: `GET /prospects/{id}/signal-suggestions`,
 `POST /signal-suggestions/{id}/approve` and `POST /signal-suggestions/{id}/reject`.
 
 ```sh
-python backend/scripts/suggest_signals.py <prospect_id> [--dry-run]
+python backend/scripts/suggest_signals.py <prospect_id> [--email] [--dry-run]
 python backend/scripts/suggest_signals.py --list [<prospect_id>]
 python backend/scripts/suggest_signals.py --approve <SS-id> ... | --reject <SS-id> ...
 ```

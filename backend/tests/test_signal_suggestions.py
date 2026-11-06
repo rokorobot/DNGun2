@@ -85,7 +85,9 @@ def test_parse_headcount():
 def test_suggest_store_dedupe_and_review(tmp_path, capsys):
     db, api, prospect_id = _prospect(tmp_path)
 
-    assert main([prospect_id], db_path=db, client=FakeClient()) == 0
+    client = FakeClient()
+    assert main([prospect_id, "--email"], db_path=db, client=client) == 0
+    assert client.calls == 6  # email lookup included only on request
     rows = _pending(db)
     assert set(rows) == {"Company size fit", "Hiring SDR", "New service launch", "Founder mentions referrals",
                          "Founder discusses pipeline", "Founder discusses growth"}
@@ -164,7 +166,8 @@ def test_suggestion_api_run_list_review(tmp_path, monkeypatch):
     db, api, prospect_id = _prospect(tmp_path)
     monkeypatch.setattr(main_module.TregClient, "from_env", classmethod(lambda cls: FakeClient()))
 
-    run = api.post(f"/prospects/{prospect_id}/signal-suggestions/run")
+    run = api.post(f"/prospects/{prospect_id}/signal-suggestions/run?include_email=true")
+    assert any("asynchronously" in w for w in run.json()["warnings"])  # email ran (opt-in)
     assert run.status_code == 200, run.text
     body = run.json()
     assert len(body["created"]) == 6 and body["already_known"] == 0
@@ -236,3 +239,18 @@ def test_run_guards_local_budget_cooldown_and_ledger(tmp_path, monkeypatch):
     # The CLI shares the same ledger and cap, with an explicit override.
     assert main([prospect_id], db_path=db, client=PaidClient()) == 3
     assert main([prospect_id, "--ignore-budget"], db_path=db, client=PaidClient()) == 0
+
+
+def test_email_lookup_is_opt_in(tmp_path):
+    from backend.app.signal_suggestions import EMAIL, estimate_cost, planned_lookups
+
+    db, api, prospect_id = _prospect(tmp_path)
+    prospect = __import__("backend.app.schemas", fromlist=["Prospect"]).Prospect.model_validate(
+        api.get(f"/prospects/{prospect_id}").json())
+    assert EMAIL not in [e for e, _ in planned_lookups(prospect)]
+    assert EMAIL in [e for e, _ in planned_lookups(prospect, include_email=True)]
+    assert estimate_cost(prospect, True) > estimate_cost(prospect)
+
+    client = FakeClient()
+    assert main([prospect_id], db_path=db, client=client) == 0
+    assert client.calls == 5

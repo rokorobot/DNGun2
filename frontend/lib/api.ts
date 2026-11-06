@@ -381,9 +381,12 @@ export function listSignalSuggestions(prospectId: string) {
   return request<SignalSuggestion[]>(`/prospects/${prospectId}/signal-suggestions`);
 }
 
-/** Spends treg credit (worst case ~$0.12) and can take a couple of minutes. */
-export function runSignalSuggestions(prospectId: string) {
-  return request<SignalSuggestionRun>(`/prospects/${prospectId}/signal-suggestions/run`, { method: "POST" });
+/** Spends treg credit (worst case ~$0.12). includeEmail adds the slow founder-email lookup (up to 30s). */
+export function runSignalSuggestions(prospectId: string, includeEmail = false) {
+  return request<SignalSuggestionRun>(
+    `/prospects/${prospectId}/signal-suggestions/run?include_email=${includeEmail}`,
+    { method: "POST" }
+  );
 }
 
 export function reviewSignalSuggestion(suggestionId: string, decision: "approve" | "reject") {

@@ -56,31 +56,33 @@ FOUNDER_TOPICS = {
 }
 
 
-def estimate_cost(prospect: Prospect) -> float:
-    return sum(MAX_USD[endpoint] for endpoint, _ in planned_lookups(prospect))
+def estimate_cost(prospect: Prospect, include_email: bool = False) -> float:
+    return sum(MAX_USD[endpoint] for endpoint, _ in planned_lookups(prospect, include_email))
 
 
-def planned_lookups(prospect: Prospect) -> list[tuple[str, dict]]:
+def planned_lookups(prospect: Prospect, include_email: bool = False) -> list[tuple[str, dict]]:
+    """Email lookup is opt-in: it is the slow one (a provider waterfall, often 30s+)."""
     domain = normalize_domain(prospect.website) if prospect.website else None
     plan: list[tuple[str, dict]] = []
     if domain:
         plan += [(ENRICH, {"domain": domain}), (JOBS, {"domain": domain, "limit": 25}),
                  (NEWS, {"domain": domain, "limit": 10}), (METRICS, {"target": domain})]
-        if prospect.founder_name:
+        if include_email and prospect.founder_name:
             plan.append((EMAIL, {"domain": domain, "full_name": prospect.founder_name}))
     if prospect.founder_linkedin and "linkedin.com/" in prospect.founder_linkedin:
         plan.append((POSTS, {"linkedin_url": prospect.founder_linkedin, "limit": 20}))
     return plan
 
 
-def gather_suggestions(client: TregClient, prospect: Prospect) -> tuple[list[dict], list[str]]:
+def gather_suggestions(client: TregClient, prospect: Prospect,
+                       include_email: bool = False) -> tuple[list[dict], list[str]]:
     """Run every applicable lookup; returns (suggestions, warnings). Never raises on provider errors."""
     parsers: dict[str, Callable[[Any, Prospect], list[dict]]] = {
         ENRICH: suggest_size_fit, JOBS: suggest_hiring, NEWS: suggest_launch,
         METRICS: suggest_website_quality, EMAIL: suggest_contact_path, POSTS: suggest_founder_topics,
     }
     suggestions, warnings = [], []
-    plan = planned_lookups(prospect)
+    plan = planned_lookups(prospect, include_email)
     if not plan:
         warnings.append("prospect has no website or founder LinkedIn URL — nothing to look up")
     for endpoint, body in plan:

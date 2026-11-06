@@ -1129,6 +1129,7 @@ function SuggestedSignalsSection({
 }) {
   const [items, setItems] = useState<SignalSuggestion[]>([]);
   const [running, setRunning] = useState(false);
+  const [includeEmail, setIncludeEmail] = useState(false);
   const [busyId, setBusyId] = useState("");
   const [lastRun, setLastRun] = useState("");
 
@@ -1138,11 +1139,15 @@ function SuggestedSignalsSection({
   }, [prospect.id]);
 
   async function run() {
-    if (!window.confirm("Look up this prospect via treg? Spends up to ~$0.12 of treg credit and can take a couple of minutes.")) return;
+    if (!window.confirm(
+      includeEmail
+        ? "Look up this prospect via treg, including founder email? Up to ~$0.12 of treg credit, ~45s."
+        : "Look up this prospect via treg? Up to ~$0.11 of treg credit, ~10–20s."
+    )) return;
     setRunning(true);
     setMessage("");
     try {
-      const result = await runSignalSuggestions(prospect.id);
+      const result = await runSignalSuggestions(prospect.id, includeEmail);
       setItems(await listSignalSuggestions(prospect.id));
       setLastRun(
         `${result.created.length} new, ${result.already_known} already known · ${result.calls} calls · $${result.spent_usd.toFixed(4)}` +
@@ -1176,6 +1181,11 @@ function SuggestedSignalsSection({
           <Sparkles size={14} className="text-[#ffb020]" /> Suggested Signals
           <span className="text-[#74837c]">({items.length} pending)</span>
         </div>
+        <div className="flex items-center gap-3">
+        <label className="flex items-center gap-1 font-mono text-[10px] uppercase text-[#74837c]" title="Founder email lookup is slow (up to 30s)">
+          <input checked={includeEmail} disabled={running} onChange={(event) => setIncludeEmail(event.target.checked)} type="checkbox" />
+          + founder email
+        </label>
         <button
           className="inline-flex h-8 items-center gap-2 border border-[#8a6a1c] bg-[#2a2008] px-3 font-mono text-[10px] uppercase text-[#ffb020] disabled:opacity-50"
           disabled={running}
@@ -1184,6 +1194,7 @@ function SuggestedSignalsSection({
         >
           <RefreshCw size={12} className={running ? "animate-spin" : ""} /> {running ? "Looking up…" : "Find via treg"}
         </button>
+        </div>
       </div>
       {lastRun ? <div className="border-b border-[#202c28] px-4 py-2 font-mono text-[10px] text-[#74837c]">{lastRun}</div> : null}
       <div className="divide-y divide-[#202c28]">
