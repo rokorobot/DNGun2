@@ -29,6 +29,7 @@ from backend.app.signal_suggestions import (  # noqa: E402
     review_suggestion,
     save_suggestions,
 )
+from backend.app.treg_budget import BudgetError, check_budget, record_spend  # noqa: E402
 from backend.app.treg_client import TregClient, TregError  # noqa: E402
 
 
@@ -39,6 +40,8 @@ def main(argv: list[str] | None = None, db_path: Path | None = None, client: Tre
     parser.add_argument("--list", action="store_true", help="list pending suggestions")
     parser.add_argument("--approve", nargs="+", metavar="ID")
     parser.add_argument("--reject", nargs="+", metavar="ID")
+    parser.add_argument("--ignore-budget", action="store_true",
+                        help="skip the daily treg budget and per-prospect cooldown checks")
     args = parser.parse_args(argv)
 
     session = create_session_factory(db_path)()
@@ -70,14 +73,23 @@ def main(argv: list[str] | None = None, db_path: Path | None = None, client: Tre
             print(f"Max cost: ~${estimate_cost(prospect):.3f}")
             return 0
 
+        if not args.ignore_budget:
+            try:
+                check_budget(session, estimate_cost(prospect), prospect.id)
+            except BudgetError as error:
+                print(error, file=sys.stderr)
+                return 3
         if client is None:
             try:
                 client = TregClient.from_env()
             except TregError as error:
                 print(error, file=sys.stderr)
                 return 2
-            client.timeout = 120  # routed lookups may try several providers in turn
-        suggestions, warnings = gather_suggestions(client, prospect)
+            client.timeout = 60
+        try:
+            suggestions, warnings = gather_suggestions(client, prospect)
+        finally:
+            record_spend(session, "cli.suggest", client.calls, client.spent_usd, prospect.id)
         created = save_suggestions(session, prospect.id, suggestions)
         print(f"{prospect.company_name}: {len(created)} new suggestion(s)"
               f" ({len(suggestions) - len(created)} already known)")

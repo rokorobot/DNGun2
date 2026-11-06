@@ -66,6 +66,7 @@ class TregClient:
         method: str = "GET",
         query: dict[str, Any] | None = None,
         body: Any = None,
+        timeout: float | None = None,
     ) -> Any:
         url = f"{self.base_url.rstrip('/')}/call/{endpoint_id}"
         if query:
@@ -77,7 +78,7 @@ class TregClient:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(request, timeout=timeout or self.timeout) as response:
                 self._record_cost(response.headers)
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as error:

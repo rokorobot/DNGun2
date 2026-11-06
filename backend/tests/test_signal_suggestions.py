@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from backend.app import models
@@ -41,7 +43,7 @@ class FakeClient:
     calls = 0
     spent_usd = 0.0
 
-    def call(self, endpoint_id, *, method="GET", query=None, body=None):
+    def call(self, endpoint_id, *, method="GET", query=None, body=None, **_):
         self.calls += 1
         response = RESPONSES[endpoint_id]
         if isinstance(response, Exception):
@@ -49,9 +51,16 @@ class FakeClient:
         return response
 
 
+@pytest.fixture(autouse=True)
+def relaxed_treg_limits(monkeypatch):
+    """Most tests re-run lookups back to back; the guard tests below tighten these."""
+    monkeypatch.setenv("DNGUN_TREG_COOLDOWN_MINUTES", "0")
+    monkeypatch.setenv("DNGUN_TREG_DAILY_BUDGET_USD", "100")
+
+
 def _prospect(tmp_path):
     db = tmp_path / "suggest.sqlite3"
-    api = TestClient(create_app(db))
+    api = TestClient(create_app(db), client=("127.0.0.1", 50000))
     response = api.post("/prospects", json={
         "company_name": "Acme", "website": "https://www.acme.io", "segment": "AI_AUTOMATION",
         "founder_name": "Jane Doe", "founder_linkedin": "https://www.linkedin.com/in/founder"})
@@ -118,7 +127,7 @@ def test_save_domain_buyers_as_prospects(tmp_path):
             "organic_results": [{"position": 4, "link": "https://acme.io/blog", "title": "Acme blog"}]}
 
     class BuyerClient(FakeClient):
-        def call(self, endpoint_id, *, method="GET", query=None, body=None):
+        def call(self, endpoint_id, *, method="GET", query=None, body=None, **_):
             self.calls += 1
             return {"treg.google.keywords.volume": {"output": {"rows": []}},
                     "serpapi.x.google-ads": serp,
@@ -190,3 +199,40 @@ def test_suggestion_api_run_without_token(tmp_path, monkeypatch):
     monkeypatch.setattr(main_module.TregClient, "from_env", classmethod(no_token))
     response = api.post(f"/prospects/{prospect_id}/signal-suggestions/run")
     assert response.status_code == 503
+
+
+class PaidClient(FakeClient):
+    """FakeClient that reports a spend, like the real client does from X-Treg-Cost-Micro."""
+    spent_usd = 0.05
+
+
+def test_run_guards_local_budget_cooldown_and_ledger(tmp_path, monkeypatch):
+    from backend.app import main as main_module
+
+    db, api, prospect_id = _prospect(tmp_path)
+    monkeypatch.setattr(main_module.TregClient, "from_env", classmethod(lambda cls: PaidClient()))
+    run = f"/prospects/{prospect_id}/signal-suggestions/run"
+
+    # Not from this machine: a remote proxy hop, or a remote direct caller.
+    assert api.post(run, headers={"X-Forwarded-For": "203.0.113.9"}).status_code == 403
+    remote = TestClient(api.app, client=("203.0.113.9", 50000))
+    assert remote.post(run).status_code == 403
+
+    monkeypatch.setenv("DNGUN_TREG_COOLDOWN_MINUTES", "10")
+    assert api.post(run, headers={"X-Forwarded-For": "127.0.0.1"}).status_code == 200
+    second = api.post(run)
+    assert second.status_code == 429 and "wait 10 min" in second.json()["detail"]
+
+    session = create_session_factory(db)()
+    ledger = session.query(models.TregSpendModel).all()
+    session.close()
+    assert [(r.source, r.prospect_id, r.spent_usd) for r in ledger] == [("api.suggest", prospect_id, 0.05)]
+
+    monkeypatch.setenv("DNGUN_TREG_COOLDOWN_MINUTES", "0")
+    monkeypatch.setenv("DNGUN_TREG_DAILY_BUDGET_USD", "0.10")  # 0.05 spent + 0.122 worst case > 0.10
+    capped = api.post(run)
+    assert capped.status_code == 429 and "daily treg budget" in capped.json()["detail"]
+
+    # The CLI shares the same ledger and cap, with an explicit override.
+    assert main([prospect_id], db_path=db, client=PaidClient()) == 3
+    assert main([prospect_id, "--ignore-budget"], db_path=db, client=PaidClient()) == 0

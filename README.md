@@ -85,6 +85,24 @@ python backend/scripts/suggest_signals.py --list [<prospect_id>]
 python backend/scripts/suggest_signals.py --approve <SS-id> ... | --reject <SS-id> ...
 ```
 
+## treg spend guards
+
+The API has no authentication, so paid treg lookups are guarded:
+
+- **Local-only:** `POST /prospects/{id}/signal-suggestions/run` returns 403
+  unless the caller is on this machine. So does every proxy hop listed in
+  `X-Forwarded-For`, which Next.js sets. Exposing the API or the console on a
+  network therefore can't spend credit.
+- **Daily cap:** `DNGUN_TREG_DAILY_BUDGET_USD` sets the maximum spend per UTC
+  day, UI and scripts combined (default 2.00). A run is refused (HTTP 429, or
+  exit code 3 for scripts) if its worst-case cost could cross the cap.
+- **Cooldown:** `DNGUN_TREG_COOLDOWN_MINUTES` sets the minimum time between
+  paid lookups of the same prospect (default 10).
+- **Ledger:** every batch of calls is recorded in the `treg_spend` table, with
+  its source, prospect, call count and USD spent.
+- **Script override:** the scripts accept `--ignore-budget`. The UI has no
+  override.
+
 ## Maintenance
 
 Recalculate stored decision-maker authority scores after changing

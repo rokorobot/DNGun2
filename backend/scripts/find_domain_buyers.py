@@ -36,6 +36,7 @@ from backend.app.domain_buyers import (  # noqa: E402
 from backend.app.database import create_session_factory  # noqa: E402
 from backend.app.repository import Repository  # noqa: E402
 from backend.app.signal_suggestions import save_buyer_prospects  # noqa: E402
+from backend.app.treg_budget import BudgetError, check_budget, record_spend  # noqa: E402
 from backend.app.treg_client import TregClient, TregError  # noqa: E402
 
 
@@ -60,6 +61,7 @@ def main(argv: list[str] | None = None, db_path: Path | None = None, client: Tre
     parser.add_argument("--segment", help="segment code for saved prospects (required with --save)")
     parser.add_argument("--json", action="store_true", help="print the full result as JSON")
     parser.add_argument("--dry-run", action="store_true", help="show planned calls and cost, call nothing")
+    parser.add_argument("--ignore-budget", action="store_true", help="skip the daily treg budget check")
     args = parser.parse_args(argv)
 
     keywords = split_keywords(args.keyword)
@@ -75,29 +77,33 @@ def main(argv: list[str] | None = None, db_path: Path | None = None, client: Tre
         print(f"Estimated cost: ~${estimate_cost(max(len(keywords), 1), args.enrich, args.expand, derive):.4f}")
         return 0
 
-    session = None
-    if args.save:
-        session = create_session_factory(db_path)()
-        if not Repository(session).get_segment_by_code(args.segment):
-            session.close()
+    session = create_session_factory(db_path)()  # also holds the treg spend ledger
+    try:
+        if args.save and not Repository(session).get_segment_by_code(args.segment):
             print(f"unknown segment '{args.segment}'", file=sys.stderr)
             return 2
-
-    if client is None:
+        if not args.ignore_budget:
+            try:
+                check_budget(session, estimate_cost(max(len(keywords), 1), args.enrich, args.expand, derive))
+            except BudgetError as error:
+                print(error, file=sys.stderr)
+                return 3
+        if client is None:
+            try:
+                client = TregClient.from_env()
+            except TregError as error:
+                print(error, file=sys.stderr)
+                return 2
         try:
-            client = TregClient.from_env()
-        except TregError as error:
-            print(error, file=sys.stderr)
-            return 2
-
-    result = find_domain_buyers(client, args.domain, keywords, location=args.location,
-                                country=args.country, enrich_top=args.enrich, expand=args.expand,
-                                big_budget=None if args.big_advertisers else args.big_budget)
-    if session is not None:
-        try:
-            result["saved"] = save_buyer_prospects(session, result, args.segment, args.save)
+            result = find_domain_buyers(client, args.domain, keywords, location=args.location,
+                                        country=args.country, enrich_top=args.enrich, expand=args.expand,
+                                        big_budget=None if args.big_advertisers else args.big_budget)
         finally:
-            session.close()
+            record_spend(session, "cli.buyers", client.calls, client.spent_usd)
+        if args.save:
+            result["saved"] = save_buyer_prospects(session, result, args.segment, args.save)
+    finally:
+        session.close()
     if args.json:
         print(json.dumps(result, indent=2))
     else:

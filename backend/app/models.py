@@ -571,3 +571,16 @@ class SignalSuggestionModel(Base):
     signal_id: Mapped[str | None] = mapped_column(ForeignKey("signals.id", ondelete="SET NULL"))
     created_at: Mapped[str] = mapped_column(String, nullable=False)
     reviewed_at: Mapped[str | None] = mapped_column(String)
+
+
+class TregSpendModel(Base):
+    """One row per batch of treg calls (UI run or script), for the daily budget and cooldowns."""
+
+    __tablename__ = "treg_spend"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source: Mapped[str] = mapped_column(String, nullable=False)  # e.g. api.suggest, cli.suggest, cli.buyers
+    prospect_id: Mapped[str | None] = mapped_column(String, index=True)
+    calls: Mapped[int] = mapped_column(Integer, nullable=False)
+    spent_usd: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False, index=True)

@@ -20,7 +20,7 @@ class FakeClient:
         self.responses = responses
         self.requests = []
 
-    def call(self, endpoint_id, *, method="GET", query=None, body=None):
+    def call(self, endpoint_id, *, method="GET", query=None, body=None, **_):
         self.calls += 1
         self.requests.append((endpoint_id, query, body))
         response = self.responses[endpoint_id]

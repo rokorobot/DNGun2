@@ -28,6 +28,9 @@ NEWS = "treg.companies.news"
 POSTS = "treg.linkedin.user.posts"
 EMAIL = "treg.people.email.find"
 METRICS = "treg.web.url.metrics"
+# The email route tries up to ~8 providers in turn and can take minutes; cap it so one slow
+# vendor doesn't stall the whole lookup. A timeout is reported as a warning.
+EMAIL_TIMEOUT_SECONDS = 30
 # Worst-case USD per lookup (most expensive provider in each route), for the estimate only.
 MAX_USD = {ENRICH: 0.004, JOBS: 0.04, NEWS: 0.04, POSTS: 0.004, EMAIL: 0.01, METRICS: 0.024}
 
@@ -82,7 +85,8 @@ def gather_suggestions(client: TregClient, prospect: Prospect) -> tuple[list[dic
         warnings.append("prospect has no website or founder LinkedIn URL — nothing to look up")
     for endpoint, body in plan:
         try:
-            response = client.call(endpoint, method="POST", body=body)
+            response = client.call(endpoint, method="POST", body=body,
+                                   timeout=EMAIL_TIMEOUT_SECONDS if endpoint == EMAIL else None)
         except TregError as error:
             warnings.append(str(error))
             continue

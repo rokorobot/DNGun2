@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
@@ -67,7 +67,20 @@ from .schemas import (
 )
 from .scoring_engine import ScoringEngine
 from . import signal_suggestions as suggestions
+from .treg_budget import BudgetError, check_budget, record_spend
 from .treg_client import TregClient, TregError
+
+
+LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def require_local_caller(request: Request) -> None:
+    """Refuse paid calls unless the caller and every proxy hop (Next.js sets X-Forwarded-For)
+    are on this machine — so exposing the API or the console on a network can't spend credit."""
+    hosts = [request.client.host if request.client else ""]
+    hosts += [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]
+    if any(host not in LOOPBACK_HOSTS for host in hosts):
+        raise HTTPException(status_code=403, detail="Paid lookups are only allowed from this machine")
 
 
 def review_signal_suggestion(session: Session, suggestion_id: str, approve: bool) -> SignalSuggestion:
@@ -187,16 +200,28 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     @app.post("/prospects/{prospect_id}/signal-suggestions/run", response_model=SignalSuggestionRun)
     def run_signal_suggestions(
         prospect_id: str,
+        request: Request,
         session: Session = Depends(get_session),
     ) -> SignalSuggestionRun:
-        """Spends treg credit (worst case ~$0.12): looks up the prospect and stores PENDING suggestions."""
+        """Spends treg credit: looks up the prospect and stores PENDING suggestions.
+
+        Guarded because the API has no auth: loopback callers only, a daily budget, and a
+        per-prospect cooldown (see treg_budget)."""
+        require_local_caller(request)
         prospect = require_prospect(Repository(session), prospect_id)
+        try:
+            check_budget(session, suggestions.estimate_cost(prospect), prospect_id)
+        except BudgetError as error:
+            raise HTTPException(status_code=429, detail=str(error))
         try:
             client = TregClient.from_env()
         except TregError:
             raise HTTPException(status_code=503, detail="TREG_TOKEN is not configured on the backend")
-        client.timeout = 120
-        found, warnings = suggestions.gather_suggestions(client, prospect)
+        client.timeout = 60
+        try:
+            found, warnings = suggestions.gather_suggestions(client, prospect)
+        finally:
+            record_spend(session, "api.suggest", client.calls, client.spent_usd, prospect_id)
         created = suggestions.save_suggestions(session, prospect_id, found)
         return SignalSuggestionRun(
             created=[SignalSuggestion.model_validate(row) for row in created],
