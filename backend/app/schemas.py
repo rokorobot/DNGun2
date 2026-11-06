@@ -145,6 +145,30 @@ class Signal(ApiModel, SignalCreate):
     created_at: str
 
 
+class SignalSuggestion(ApiModel):
+    id: str
+    prospect_id: str
+    signal_type: str
+    tier: int
+    score: int
+    source_url: str | None = None
+    observed_at: str
+    notes: str | None = None
+    provider: str | None = None
+    status: Literal["PENDING", "APPROVED", "REJECTED"]
+    signal_id: str | None = None
+    created_at: str
+    reviewed_at: str | None = None
+
+
+class SignalSuggestionRun(BaseModel):
+    created: list[SignalSuggestion]
+    already_known: int
+    warnings: list[str]
+    calls: int
+    spent_usd: float
+
+
 class AlphaSignalCreate(BaseModel):
     code: str = Field(min_length=1)
     name: str = Field(min_length=1)

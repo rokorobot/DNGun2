@@ -72,6 +72,13 @@ as **pending** suggestions. A suggestion becomes a scored signal only after you
 approve it. Rejected suggestions are not proposed again. A lookup costs up to
 about $0.12 per prospect, usually around $0.05.
 
+In the console, the **Suggested Signals** panel under Prospect Intelligence does
+the same thing. **Find via treg** runs the lookups, and each row has
+**Approve** and **Reject** buttons. The backend reads `TREG_TOKEN` from the
+repo-root `.env`. API endpoints: `GET /prospects/{id}/signal-suggestions`,
+`POST /prospects/{id}/signal-suggestions/run`,
+`POST /signal-suggestions/{id}/approve` and `POST /signal-suggestions/{id}/reject`.
+
 ```sh
 python backend/scripts/suggest_signals.py <prospect_id> [--dry-run]
 python backend/scripts/suggest_signals.py --list [<prospect_id>]

@@ -54,6 +54,8 @@ from .schemas import (
     ProspectScoreRead,
     Signal,
     SignalCreate,
+    SignalSuggestion,
+    SignalSuggestionRun,
     AlphaSignalPerformanceRead,
     SignalPerformanceRead,
     SegmentRegistry,
@@ -64,6 +66,17 @@ from .schemas import (
     ContactPathCreate,
 )
 from .scoring_engine import ScoringEngine
+from . import signal_suggestions as suggestions
+from .treg_client import TregClient, TregError
+
+
+def review_signal_suggestion(session: Session, suggestion_id: str, approve: bool) -> SignalSuggestion:
+    if session.get(_models.SignalSuggestionModel, suggestion_id) is None:
+        raise HTTPException(status_code=404, detail="Signal suggestion not found")
+    try:
+        return SignalSuggestion.model_validate(suggestions.review_suggestion(session, suggestion_id, approve))
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
 
 
 def create_app(db_path: Path | None = None) -> FastAPI:
@@ -160,6 +173,43 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     ) -> list[Signal]:
         require_prospect(repository, prospect_id)
         return repository.list_signals(prospect_id)
+
+    @app.get("/prospects/{prospect_id}/signal-suggestions", response_model=list[SignalSuggestion])
+    def list_signal_suggestions(
+        prospect_id: str,
+        status: str | None = Query(default="PENDING", description="PENDING, APPROVED, REJECTED or ALL"),
+        session: Session = Depends(get_session),
+    ) -> list[SignalSuggestion]:
+        require_prospect(Repository(session), prospect_id)
+        rows = suggestions.list_suggestions(session, prospect_id, None if status == "ALL" else status)
+        return [SignalSuggestion.model_validate(row) for row in rows]
+
+    @app.post("/prospects/{prospect_id}/signal-suggestions/run", response_model=SignalSuggestionRun)
+    def run_signal_suggestions(
+        prospect_id: str,
+        session: Session = Depends(get_session),
+    ) -> SignalSuggestionRun:
+        """Spends treg credit (worst case ~$0.12): looks up the prospect and stores PENDING suggestions."""
+        prospect = require_prospect(Repository(session), prospect_id)
+        try:
+            client = TregClient.from_env()
+        except TregError:
+            raise HTTPException(status_code=503, detail="TREG_TOKEN is not configured on the backend")
+        client.timeout = 120
+        found, warnings = suggestions.gather_suggestions(client, prospect)
+        created = suggestions.save_suggestions(session, prospect_id, found)
+        return SignalSuggestionRun(
+            created=[SignalSuggestion.model_validate(row) for row in created],
+            already_known=len(found) - len(created), warnings=warnings,
+            calls=client.calls, spent_usd=round(client.spent_usd, 6))
+
+    @app.post("/signal-suggestions/{suggestion_id}/approve", response_model=SignalSuggestion)
+    def approve_signal_suggestion(suggestion_id: str, session: Session = Depends(get_session)) -> SignalSuggestion:
+        return review_signal_suggestion(session, suggestion_id, approve=True)
+
+    @app.post("/signal-suggestions/{suggestion_id}/reject", response_model=SignalSuggestion)
+    def reject_signal_suggestion(suggestion_id: str, session: Session = Depends(get_session)) -> SignalSuggestion:
+        return review_signal_suggestion(session, suggestion_id, approve=False)
 
     @app.post("/alpha-signals", response_model=AlphaSignal, status_code=201)
     def create_alpha_signal(

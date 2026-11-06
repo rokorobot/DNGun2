@@ -4,6 +4,9 @@ import {
   Activity,
   BarChart3,
   BookOpenCheck,
+  Check,
+  Sparkles,
+  X,
   CheckSquare,
   ClipboardList,
   Edit2,
@@ -22,6 +25,10 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
+  listSignalSuggestions,
+  reviewSignalSuggestion,
+  runSignalSuggestions,
+  SignalSuggestion,
   addSignal,
   AlphaSignalRule,
   approveOfferProposal,
@@ -1042,6 +1049,10 @@ function ScoringWorkspace({
             </>
           ) : null}
 
+          {prospect ? (
+            <SuggestedSignalsSection prospect={prospect} onApproved={onSignalAdded} setMessage={setMessage} />
+          ) : null}
+
           <section className="border border-[#202c28] bg-[#0b0f10]">
             <div className="border-b border-[#202c28] px-4 py-3 font-mono text-xs uppercase tracking-[0.12em] text-white">
               Signals
@@ -1104,6 +1115,121 @@ function ScoringWorkspace({
         </form>
       </div>
     </Panel>
+  );
+}
+
+function SuggestedSignalsSection({
+  prospect,
+  onApproved,
+  setMessage
+}: {
+  prospect: Prospect;
+  onApproved: () => Promise<void>;
+  setMessage: (message: string) => void;
+}) {
+  const [items, setItems] = useState<SignalSuggestion[]>([]);
+  const [running, setRunning] = useState(false);
+  const [busyId, setBusyId] = useState("");
+  const [lastRun, setLastRun] = useState("");
+
+  useEffect(() => {
+    setLastRun("");
+    void listSignalSuggestions(prospect.id).then(setItems).catch((error) => setMessage(readError(error)));
+  }, [prospect.id]);
+
+  async function run() {
+    if (!window.confirm("Look up this prospect via treg? Spends up to ~$0.12 of treg credit and can take a couple of minutes.")) return;
+    setRunning(true);
+    setMessage("");
+    try {
+      const result = await runSignalSuggestions(prospect.id);
+      setItems(await listSignalSuggestions(prospect.id));
+      setLastRun(
+        `${result.created.length} new, ${result.already_known} already known · ${result.calls} calls · $${result.spent_usd.toFixed(4)}` +
+          (result.warnings.length ? ` · ${result.warnings.length} lookup(s) failed` : "")
+      );
+    } catch (error) {
+      setMessage(readError(error));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function review(item: SignalSuggestion, decision: "approve" | "reject") {
+    setBusyId(item.id);
+    setMessage("");
+    try {
+      await reviewSignalSuggestion(item.id, decision);
+      setItems((current) => current.filter((entry) => entry.id !== item.id));
+      if (decision === "approve") await onApproved();
+    } catch (error) {
+      setMessage(readError(error));
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  return (
+    <section className="border border-[#202c28] bg-[#0b0f10]">
+      <div className="flex items-center justify-between gap-3 border-b border-[#202c28] px-4 py-3">
+        <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[0.12em] text-white">
+          <Sparkles size={14} className="text-[#ffb020]" /> Suggested Signals
+          <span className="text-[#74837c]">({items.length} pending)</span>
+        </div>
+        <button
+          className="inline-flex h-8 items-center gap-2 border border-[#8a6a1c] bg-[#2a2008] px-3 font-mono text-[10px] uppercase text-[#ffb020] disabled:opacity-50"
+          disabled={running}
+          onClick={() => void run()}
+          type="button"
+        >
+          <RefreshCw size={12} className={running ? "animate-spin" : ""} /> {running ? "Looking up…" : "Find via treg"}
+        </button>
+      </div>
+      {lastRun ? <div className="border-b border-[#202c28] px-4 py-2 font-mono text-[10px] text-[#74837c]">{lastRun}</div> : null}
+      <div className="divide-y divide-[#202c28]">
+        {items.length === 0 ? (
+          <div className="px-4 py-3 text-xs text-[#74837c]">
+            No pending suggestions. Approved suggestions become signals; rejected ones are not proposed again.
+          </div>
+        ) : null}
+        {items.map((item) => (
+          <div className="grid gap-2 px-4 py-3 md:grid-cols-[1fr_70px_70px_160px]" key={item.id}>
+            <div className="min-w-0">
+              <div className="font-mono text-sm text-white">{item.signal_type}</div>
+              <div className="mt-1 break-words text-xs text-[#aebbb4]">{item.notes || "No notes"}</div>
+              <div className="mt-1 truncate font-mono text-[10px] text-[#74837c]">
+                {item.source_url ? (
+                  <a className="text-[#00c8ff] hover:underline" href={item.source_url} rel="noreferrer" target="_blank">
+                    {item.source_url}
+                  </a>
+                ) : null}
+                {item.provider ? <span> · via {item.provider}</span> : null}
+              </div>
+            </div>
+            <div className="font-mono text-xs text-[#00c8ff]">TIER {item.tier}</div>
+            <div className="font-mono text-xs text-[#00e084]">SCORE {item.score}</div>
+            <div className="flex items-start gap-2">
+              <button
+                className="inline-flex h-8 flex-1 items-center justify-center gap-1 border border-[#00b86b] bg-[#07351f] font-mono text-[10px] uppercase text-[#00e084] disabled:opacity-50"
+                disabled={busyId === item.id}
+                onClick={() => void review(item, "approve")}
+                type="button"
+              >
+                <Check size={12} /> Approve
+              </button>
+              <button
+                className="inline-flex h-8 flex-1 items-center justify-center gap-1 border border-[#6b2b2b] bg-[#2a0f0f] font-mono text-[10px] uppercase text-[#ff6b6b] disabled:opacity-50"
+                disabled={busyId === item.id}
+                onClick={() => void review(item, "reject")}
+                type="button"
+              >
+                <X size={12} /> Reject
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

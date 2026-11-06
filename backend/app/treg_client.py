@@ -13,9 +13,22 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 DEFAULT_BASE_URL = "https://treg.to"
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+
+
+def load_env_file(path: Path = ENV_FILE) -> None:
+    """Minimal .env reader (no dependency): sets only variables not already in the environment."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip().removeprefix("export "), value.strip().strip("'\""))
 
 
 class TregError(RuntimeError):
@@ -35,6 +48,8 @@ class TregClient:
 
     @classmethod
     def from_env(cls) -> "TregClient":
+        """TREG_TOKEN / TREG_URL from the environment, falling back to the repo-root .env."""
+        load_env_file()
         token = os.environ.get("TREG_TOKEN")
         if not token:
             raise TregError("-", None, "TREG_TOKEN is not set")

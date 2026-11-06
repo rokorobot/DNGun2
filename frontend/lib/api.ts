@@ -353,6 +353,43 @@ export function addSignal(
   });
 }
 
+export type SignalSuggestion = {
+  id: string;
+  prospect_id: string;
+  signal_type: string;
+  tier: number;
+  score: number;
+  source_url?: string | null;
+  observed_at: string;
+  notes?: string | null;
+  provider?: string | null;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  signal_id?: string | null;
+  created_at: string;
+  reviewed_at?: string | null;
+};
+
+export type SignalSuggestionRun = {
+  created: SignalSuggestion[];
+  already_known: number;
+  warnings: string[];
+  calls: number;
+  spent_usd: number;
+};
+
+export function listSignalSuggestions(prospectId: string) {
+  return request<SignalSuggestion[]>(`/prospects/${prospectId}/signal-suggestions`);
+}
+
+/** Spends treg credit (worst case ~$0.12) and can take a couple of minutes. */
+export function runSignalSuggestions(prospectId: string) {
+  return request<SignalSuggestionRun>(`/prospects/${prospectId}/signal-suggestions/run`, { method: "POST" });
+}
+
+export function reviewSignalSuggestion(suggestionId: string, decision: "approve" | "reject") {
+  return request<SignalSuggestion>(`/signal-suggestions/${suggestionId}/${decision}`, { method: "POST" });
+}
+
 export function calculateScore(prospectId: string) {
   return request<ProspectScore>(`/prospects/${prospectId}/score?persist=true`, {
     method: "POST"

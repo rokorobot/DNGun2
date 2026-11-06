@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -39,15 +38,6 @@ from backend.app.repository import Repository  # noqa: E402
 from backend.app.signal_suggestions import save_buyer_prospects  # noqa: E402
 from backend.app.treg_client import TregClient, TregError  # noqa: E402
 
-
-def load_env(path: Path) -> None:
-    if not path.exists():
-        return
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, value = line.split("=", 1)
-            os.environ.setdefault(key.strip().removeprefix("export "), value.strip().strip("'\""))
 
 
 def main(argv: list[str] | None = None, db_path: Path | None = None, client: TregClient | None = None) -> int:
@@ -94,7 +84,6 @@ def main(argv: list[str] | None = None, db_path: Path | None = None, client: Tre
             return 2
 
     if client is None:
-        load_env(ROOT / ".env")
         try:
             client = TregClient.from_env()
         except TregError as error:

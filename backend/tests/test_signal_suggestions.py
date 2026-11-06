@@ -147,3 +147,46 @@ def test_save_requires_known_segment(tmp_path):
 
     db, _, _ = _prospect(tmp_path)
     assert find_main(["x.com", "-k", "x", "--save", "1", "--segment", "NOPE"], db_path=db, client=FakeClient()) == 2
+
+
+def test_suggestion_api_run_list_review(tmp_path, monkeypatch):
+    from backend.app import main as main_module
+
+    db, api, prospect_id = _prospect(tmp_path)
+    monkeypatch.setattr(main_module.TregClient, "from_env", classmethod(lambda cls: FakeClient()))
+
+    run = api.post(f"/prospects/{prospect_id}/signal-suggestions/run")
+    assert run.status_code == 200, run.text
+    body = run.json()
+    assert len(body["created"]) == 6 and body["already_known"] == 0
+    assert any("upstream down" in w for w in body["warnings"])
+
+    pending = api.get(f"/prospects/{prospect_id}/signal-suggestions").json()
+    assert len(pending) == 6 and {s["status"] for s in pending} == {"PENDING"}
+    hiring = next(s for s in pending if s["signal_type"] == "Hiring SDR")
+    size = next(s for s in pending if s["signal_type"] == "Company size fit")
+
+    approved = api.post(f"/signal-suggestions/{hiring['id']}/approve")
+    assert approved.status_code == 200 and approved.json()["status"] == "APPROVED"
+    assert approved.json()["signal_id"]
+    assert api.post(f"/signal-suggestions/{size['id']}/reject").json()["status"] == "REJECTED"
+    assert api.post(f"/signal-suggestions/{hiring['id']}/reject").status_code == 409
+    assert api.post("/signal-suggestions/SS-missing/approve").status_code == 404
+
+    assert [s["signal_type"] for s in api.get(f"/prospects/{prospect_id}/signals").json()] == ["Hiring SDR"]
+    assert len(api.get(f"/prospects/{prospect_id}/signal-suggestions").json()) == 4
+    assert len(api.get(f"/prospects/{prospect_id}/signal-suggestions?status=ALL").json()) == 6
+    assert api.get("/prospects/P-missing/signal-suggestions").status_code == 404
+
+
+def test_suggestion_api_run_without_token(tmp_path, monkeypatch):
+    from backend.app import main as main_module
+
+    _, api, prospect_id = _prospect(tmp_path)
+
+    def no_token(cls):
+        raise TregError("-", None, "TREG_TOKEN is not set")
+
+    monkeypatch.setattr(main_module.TregClient, "from_env", classmethod(no_token))
+    response = api.post(f"/prospects/{prospect_id}/signal-suggestions/run")
+    assert response.status_code == 503

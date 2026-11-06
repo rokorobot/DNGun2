@@ -30,7 +30,6 @@ from backend.app.signal_suggestions import (  # noqa: E402
     save_suggestions,
 )
 from backend.app.treg_client import TregClient, TregError  # noqa: E402
-from backend.scripts.find_domain_buyers import load_env  # noqa: E402
 
 
 def main(argv: list[str] | None = None, db_path: Path | None = None, client: TregClient | None = None) -> int:
@@ -72,7 +71,6 @@ def main(argv: list[str] | None = None, db_path: Path | None = None, client: Tre
             return 0
 
         if client is None:
-            load_env(ROOT / ".env")
             try:
                 client = TregClient.from_env()
             except TregError as error:
