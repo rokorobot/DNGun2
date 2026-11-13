@@ -1,0 +1,24 @@
+digraph G {
+  graph [rankdir=LR, fontname="DejaVu Sans", fontsize=20, label="Acquisition hypothesis lifecycle (MVP 1.3A)", labelloc=t, nodesep=0.5, ranksep=0.9, pad=0.3];
+  node  [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=12, fillcolor="#f3f4f6", color="#9ca3af"];
+  edge  [fontname="DejaVu Sans", fontsize=10, color="#4b5563"];
+
+  src [label="Sources\nHUMAN · DETERMINISTIC\n(LLM_ASSISTED in 1.3A-4)", shape=note, fillcolor="#eef2ff"];
+  DRAFT [label="DRAFT\neditable · link/unlink\nACTIVE evidence", fillcolor="#e0f2fe"];
+  PROPOSED [label="PROPOSED\ncontent + evidence frozen\nconfidence computed", fillcolor="#fef9c3"];
+  APPROVED [label="APPROVED\nreviewer: STRONG/ADEQUATE/WEAK", fillcolor="#dcfce7"];
+  ACTIVE [label="ACTIVE outreach hypothesis\none per offer × prospect", fillcolor="#86efac", color="#16a34a"];
+  REJECTED [label="REJECTED\nterminal", fillcolor="#fecaca"];
+  SUPERSEDED [label="SUPERSEDED\nterminal · evidence kept", fillcolor="#e5e7eb"];
+  dormant [label="VALIDATING · SUPPORTED · WEAKENED\nunreachable until MVP 1.4 outcomes", style="rounded,dashed", fillcolor="white", fontcolor="#6b7280"];
+
+  src -> DRAFT [label="create / generate"];
+  DRAFT -> PROPOSED [label="propose"];
+  PROPOSED -> APPROVED [label="approve\n(needs ≥1 evidence)"];
+  PROPOSED -> REJECTED [label="reject"];
+  APPROVED -> ACTIVE [label="activate: ≥1 ACTIVE evidence,\nconfidence set, parent APPROVED\n(swaps out previous active)"];
+  PROPOSED -> SUPERSEDED [label="supersede"];
+  APPROVED -> SUPERSEDED [label="supersede"];
+  SUPERSEDED -> DRAFT [label="successor DRAFT\n(zero evidence links)", style=dashed, constraint=false];
+  APPROVED -> dormant [style=dotted, color="#9ca3af", label="MVP 1.4", fontcolor="#9ca3af"];
+}

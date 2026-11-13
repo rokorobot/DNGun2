@@ -1,0 +1,67 @@
+digraph G {
+  graph [rankdir=TB, fontname="DejaVu Sans", fontsize=20, label="DNGun 2 — scoring & learning algorithms", labelloc=t, nodesep=0.4, ranksep=0.4, pad=0.3];
+  node  [shape=plain, fontname="DejaVu Sans", fontsize=11];
+  edge  [color="#6b7280", fontname="DejaVu Sans"];
+
+  score [label=<
+<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0fdf4" COLOR="#22c55e" STYLE="rounded">
+<TR><TD BGCOLOR="#dcfce7" ALIGN="LEFT"><B>① Prospect score</B> · scoring_engine.py</TD></TR>
+<TR><TD ALIGN="LEFT">base = 3·Σ tier-1 scores + 2·Σ tier-2 + 1·Σ tier-3</TD></TR>
+<TR><TD ALIGN="LEFT">final = base + Σ bonuses of assigned Alpha Signals</TD></TR>
+<TR><TD ALIGN="LEFT">≥80 CONTACT_NOW · 60–79 SECONDARY · ≤59 IGNORE</TD></TR>
+<TR><TD ALIGN="LEFT">any disqualifier signal → DISQUALIFY (overrides score)</TD></TR>
+<TR><TD ALIGN="LEFT"><I>every contribution logged as a provenance line</I></TD></TR>
+</TABLE>>];
+
+  fit [label=<
+<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#eff6ff" COLOR="#3b82f6" STYLE="rounded">
+<TR><TD BGCOLOR="#dbeafe" ALIGN="LEFT"><B>② Offer × Prospect fit</B> · offer_fit.py (0–100)</TD></TR>
+<TR><TD ALIGN="LEFT">segment matches offer target segment: +25</TD></TR>
+<TR><TD ALIGN="LEFT">buyer-profile word overlap: 8 per word, max 25</TD></TR>
+<TR><TD ALIGN="LEFT">signal matches offer signal: +18 / +12 / +7 by tier, max 50</TD></TR>
+<TR><TD ALIGN="LEFT">≥70 STRONG · 40–69 POSSIBLE · &lt;40 WEAK · disqualifier → 0</TD></TR>
+</TABLE>>];
+
+  auth [label=<
+<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#faf5ff" COLOR="#a855f7" STYLE="rounded">
+<TR><TD BGCOLOR="#f3e8ff" ALIGN="LEFT"><B>③ Decision-maker authority</B> · authority_engine.py</TD></TR>
+<TR><TD ALIGN="LEFT">role title → first whole-word rule match in authority_rules.yaml</TD></TR>
+<TR><TD ALIGN="LEFT">e.g. Founder 95 · CEO 90 · CMO 75 · BizDev 65</TD></TR>
+<TR><TD ALIGN="LEFT">no match 20 · empty role 10</TD></TR>
+</TABLE>>];
+
+  rc [label=<
+<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#fffbeb" COLOR="#f59e0b" STYLE="rounded">
+<TR><TD BGCOLOR="#fde68a" ALIGN="LEFT"><B>④ Hypothesis reasoning confidence</B> · reasoning_confidence.py (0–100)</TD></TR>
+<TR><TD ALIGN="LEFT">only ACTIVE evidence counts:</TD></TR>
+<TR><TD ALIGN="LEFT">  base 10 · count 12+9+7+5+3 · type diversity ≤18 · recency (≤90 days) ≤12</TD></TR>
+<TR><TD ALIGN="LEFT">  mentions this offer +8 · matches prospect PDM +6 · mentions decision maker +10</TD></TR>
+<TR><TD ALIGN="LEFT">penalties: older than 1 year −3 each (max −9) · no source −2 each (max −6)</TD></TR>
+<TR><TD ALIGN="LEFT">  RETRACTED/INVALIDATED link −8 each (max −16) · ARCHIVED = neutral</TD></TR>
+<TR><TD ALIGN="LEFT"><I>frozen at PROPOSED; approval never changes it</I></TD></TR>
+</TABLE>>];
+
+  learn [label=<
+<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#fef2f2" COLOR="#ef4444" STYLE="rounded">
+<TR><TD BGCOLOR="#fee2e2" ALIGN="LEFT"><B>⑤ Learning loop</B> · learning.py (per signal, Alpha Signal, score band)</TD></TR>
+<TR><TD ALIGN="LEFT">latest outcome per prospect → reply / call / proposal / pilot rates (÷ contacted)</TD></TR>
+<TR><TD ALIGN="LEFT">ranking = Wilson lower bound(pilot) + 0.1 × Wilson(reply)</TD></TR>
+<TR><TD ALIGN="LEFT">data confidence: &lt;5 contacted INSUFFICIENT · &lt;15 LOW · &lt;40 MEDIUM · HIGH</TD></TR>
+<TR><TD ALIGN="LEFT">signal advice: pilot ≥10% (n≥10) INCREASE_WEIGHT · reply &lt;5% (n≥10) DECREASE_WEIGHT</TD></TR>
+<TR><TD ALIGN="LEFT">  n≥20, no pilots, reply &lt;10% RETIRE_OR_REVIEW · reply ≥30% and call ≥15% KEEP</TD></TR>
+<TR><TD ALIGN="LEFT">band advice: CONTACT_NOW reply &lt;10% → REVIEW_SCORE_THRESHOLD</TD></TR>
+<TR><TD ALIGN="LEFT">  IGNORE/DISQUALIFY reply ≥20% → REVIEW_UNDERRATED_BAND</TD></TR>
+</TABLE>>];
+
+  yaml [label=<
+<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6" BGCOLOR="#fefce8" COLOR="#eab308" STYLE="rounded">
+<TR><TD><B>Rule Registry YAML</B> — a human applies the advice</TD></TR>
+</TABLE>>];
+
+  {rank=same; score; fit; auth}
+  score -> learn [label=" score band", fontsize=10];
+  rc -> learn [style=invis];
+  learn -> yaml [label=" recommendations", fontsize=10, color="#ca8a04"];
+  yaml -> score [style=dashed, color="#ca8a04", constraint=false];
+  fit -> rc [style=invis];
+}

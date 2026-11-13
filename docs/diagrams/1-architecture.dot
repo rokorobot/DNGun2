@@ -1,0 +1,52 @@
+digraph G {
+  graph [rankdir=TB, fontname="DejaVu Sans", fontsize=20, label="DNGun 2 — architecture & data flow", labelloc=t, nodesep=0.35, ranksep=0.45, bgcolor="white", pad=0.3];
+  node  [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=12, fillcolor="#f3f4f6", color="#9ca3af"];
+  edge  [fontname="DejaVu Sans", fontsize=10, color="#6b7280"];
+
+  subgraph cluster_ui { label="Frontend · Next.js (page.tsx, 7 views)"; style="rounded,filled"; fillcolor="#eef2ff"; color="#818cf8"; fontsize=13;
+    ui [label="Inbox · Scoring · Offers · Outcomes\nEvidence · Report · Learning", fillcolor="white"];
+  }
+  proxy [label="/backend-api/* proxy\n→ 127.0.0.1:8001", shape=cds, fillcolor="#e0e7ff"];
+
+  subgraph cluster_rules { label="Rule Registry · backend/app/rules/*.yaml"; style="rounded,filled"; fillcolor="#fefce8"; color="#eab308"; fontsize=13;
+    rules [label="score_bands (+ tier multipliers 3/2/1)\nsignal_taxonomy · alpha_signals\ndisqualifiers · authority_rules", fillcolor="white"];
+  }
+
+  subgraph cluster_flow { label="FastAPI · main.py → repository.py → SQLite (data/dngun.sqlite3)"; style="rounded,filled"; fillcolor="#f0fdf4"; color="#22c55e"; fontsize=13;
+    prospect [label="① Prospect\n(segment → PDM)"];
+    signals  [label="② Signals\ntier 1–3, score 0–5"];
+    alpha    [label="Alpha Signals\n(manual assign)"];
+    dm       [label="Decision Makers\n+ Contact Paths"];
+    score    [label="③ ScoringEngine\nbase + alpha → decision\n+ provenance", fillcolor="#dcfce7"];
+    authority[label="AuthorityEngine\nrole → 0–100", fillcolor="#dcfce7"];
+    batch    [label="④ Campaign Batch"];
+    outcome  [label="⑤ Campaign Outcomes\ncontacted→replied→call\n→proposal→pilot"];
+    evidence [label="⑥ Evidence Ledger\nACTIVE/ARCHIVED/\nRETRACTED/INVALIDATED"];
+    conf     [label="⑦ Confidence Updates\nbefore → impact → after"];
+    learn    [label="⑧ Learning + Reports\nrates · Wilson score\nrule-change advice", fillcolor="#dcfce7"];
+
+    offer    [label="Offer (domain)"];
+    offerev  [label="Offer evaluation\ndeterministic | LLM\n→ PENDING_REVIEW", fillcolor="#dcfce7"];
+    profile  [label="Approved Offer\nIntelligence Profile\n(category, buyers, signals, PDM)"];
+    fit      [label="Offer × Prospect Fit\n0–100 → STRONG/POSSIBLE/\nWEAK/DISQUALIFIED", fillcolor="#dcfce7"];
+    hyp      [label="Acquisition Hypothesis\n(MVP 1.3A, API only)\nDRAFT→PROPOSED→APPROVED\n→ active", fillcolor="#fde68a"];
+    msg      [label="Message drafts\n(MVP 1.3B, not built)", style="rounded,dashed", fillcolor="white"];
+  }
+
+  ui -> proxy [dir=both];
+  proxy -> prospect [lhead=cluster_flow, label="REST"];
+
+  prospect -> signals -> score;
+  alpha -> score;
+  prospect -> dm -> authority;
+  score -> batch [label="rank: CONTACT_NOW first"];
+  batch -> outcome -> evidence -> conf;
+  outcome -> learn; evidence -> learn; score -> learn [label="score band"];
+  learn -> rules [label="recommends weight\nchanges (human edits YAML)", style=dashed, color="#ca8a04", fontcolor="#a16207"];
+  rules -> score [color="#ca8a04"]; rules -> authority [color="#ca8a04"]; rules -> fit [color="#ca8a04"];
+
+  offer -> offerev; offerev -> profile [label="human approve"];
+  profile -> fit; signals -> fit;
+  profile -> hyp; signals -> hyp; evidence -> hyp [label="linked by ID"]; dm -> hyp [label="refinement"];
+  hyp -> msg [style=dashed];
+}
