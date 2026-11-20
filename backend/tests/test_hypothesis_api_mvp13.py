@@ -366,3 +366,119 @@ def test_generator_is_deterministic_and_capped():
     )
     assert generate_acquisition_hypothesis(**kwargs) == generate_acquisition_hypothesis(**kwargs)
     assert "category ownership" in generate_acquisition_hypothesis(**kwargs)["recipient_framing"]
+
+
+# --- Subscription-friendly AI assist (copy prompt, paste answer) ------------
+
+
+def test_assist_prompt_contains_only_scoped_active_evidence(tmp_path):
+    client, db_path, offer, prospect = _setup(tmp_path)
+    scoped = _evidence(client, offer_id=offer["id"], evidence="Opened a robotics store.")
+    _evidence(client, pdm_code="SEO", evidence="Unrelated PDM.")
+    retracted = _evidence(client, offer_id=offer["id"], evidence="Withdrawn claim.")
+    _set_evidence_status(db_path, retracted["id"], "RETRACTED")
+
+    response = client.get(f"{_hypotheses_url(offer, prospect)}/assist-prompt")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["evidence_ids"] == [scoped["id"]]
+    assert f"[{scoped['id']}]" in body["prompt"]
+    assert "Opened a robotics store." in body["prompt"]
+    assert "Unrelated PDM." not in body["prompt"]
+    assert "Withdrawn claim." not in body["prompt"]
+    assert '"evidence_ids"' in body["prompt"]
+
+
+def test_assist_round_trip_creates_reviewable_llm_draft(tmp_path):
+    client, _, offer, prospect = _setup(tmp_path)
+    evidence = _evidence(client, offer_id=offer["id"])
+    pasted = (
+        "Here is the hypothesis:\n```json\n"
+        f'{{"statement": "Expanding into ecommerce.", "recipient_framing": null, '
+        f'"evidence_ids": ["{evidence["id"]}", "{evidence["id"]}"]}}\n```'
+    )
+
+    response = client.post(
+        f"{_hypotheses_url(offer, prospect)}/assist",
+        json={"response": pasted, "model": "claude (subscription)"},
+    )
+
+    assert response.status_code == 201
+    draft = response.json()
+    assert draft["status"] == "DRAFT"
+    assert draft["source"] == "LLM_ASSISTED"
+    assert draft["provider"] == "manual-paste"
+    assert draft["model"] == "claude (subscription)"
+    assert draft["statement"] == "Expanding into ecommerce."
+    assert draft["reasoning_confidence"] is None  # invariant 7
+    assert [l["evidence_entry_id"] for l in draft["evidence_links"]] == [evidence["id"]]
+    # Same review gate as every other source; no automatic approval.
+    assert client.post(f"/hypotheses/{draft['id']}/activate").status_code == 409
+    assert client.post(f"/hypotheses/{draft['id']}/propose").json()["status"] == "PROPOSED"
+
+
+def test_assist_rejects_invented_or_out_of_scope_evidence(tmp_path):
+    client, _, offer, prospect = _setup(tmp_path)
+    _evidence(client, offer_id=offer["id"])
+    unrelated = _evidence(client, pdm_code="SEO")
+    url = f"{_hypotheses_url(offer, prospect)}/assist"
+
+    for bad_id in ["EV-INVENTED", unrelated["id"]]:
+        pasted = f'{{"statement": "x", "evidence_ids": ["{bad_id}"]}}'
+        response = client.post(url, json={"response": pasted})
+        assert response.status_code == 422
+        assert bad_id in response.json()["detail"]
+    assert client.get(_hypotheses_url(offer, prospect)).json() == []  # nothing stored
+
+
+def test_assist_rejects_malformed_answers(tmp_path):
+    client, _, offer, prospect = _setup(tmp_path)
+    url = f"{_hypotheses_url(offer, prospect)}/assist"
+    for pasted in [
+        "Sorry, I can't help with that.",
+        "{not json}",
+        '{"statement": ""}',
+        '{"statement": "x", "evidence_ids": "EV-1"}',
+        '{"statement": "x", "status": "APPROVED", "recipient_framing": 5}',
+    ]:
+        assert client.post(url, json={"response": pasted}).status_code == 422
+    # Governed fields in the payload itself are forbidden too.
+    assert client.post(
+        url, json={"response": '{"statement": "x"}', "status": "APPROVED"}
+    ).status_code == 422
+
+
+def test_assist_requires_profile(tmp_path):
+    client, _, offer, prospect = _setup(tmp_path, approve_profile=False)
+
+    assert client.get(f"{_hypotheses_url(offer, prospect)}/assist-prompt").status_code == 409
+    assert client.post(
+        f"{_hypotheses_url(offer, prospect)}/assist", json={"response": '{"statement": "x"}'}
+    ).status_code == 409
+
+
+def test_assist_decision_maker_needs_parent(tmp_path):
+    client, _, offer, prospect = _setup(tmp_path)
+    dm = client.post(
+        f"/prospects/{prospect['id']}/decision-makers", json={"name": "Ada", "role": "Founder"}
+    ).json()
+    base = _hypotheses_url(offer, prospect)
+    prompt = client.get(f"{base}/assist-prompt", params={"decision_maker_id": dm["id"]}).json()
+    assert "Ada, Founder" in prompt["prompt"]
+    pasted = '{"statement": "Founder angle.", "recipient_framing": "Brand equity.", "evidence_ids": []}'
+
+    orphan = client.post(f"{base}/assist", json={"response": pasted, "decision_maker_id": dm["id"]})
+    assert orphan.status_code == 409  # invariant 5
+
+    parent = client.post(base, json={"statement": "Company-level claim."}).json()
+    child = client.post(
+        f"{base}/assist",
+        json={
+            "response": pasted,
+            "decision_maker_id": dm["id"],
+            "refines_hypothesis_id": parent["id"],
+        },
+    ).json()
+    assert child["recipient_framing"] == "Brand equity."
+    assert child["parent"]["id"] == parent["id"]

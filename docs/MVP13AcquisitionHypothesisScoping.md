@@ -283,6 +283,16 @@ HUMAN | DETERMINISTIC | LLM_ASSISTED  →  all enter PROPOSED  →  human review
   - select the final outreach hypothesis,
   - generate a send-ready message without review.
 
+**Operator amendment (2026-11-20) — subscription-friendly LLM assist:**
+1.3A-4 is implemented without any provider API call or key. The app builds
+a prompt from the scoped, already-recorded evidence
+(`GET .../hypotheses/assist-prompt`); the operator pastes it into their own
+Claude chat (covered by their subscription) and pastes the JSON answer back
+(`POST .../hypotheses/assist`). The answer becomes a `LLM_ASSISTED` DRAFT
+with `provider = manual-paste`; any evidence ID outside the prompt's scoped
+ACTIVE set rejects the whole answer. All other generation-authority rules
+above apply unchanged. The env-gated API path is not built.
+
 ### Active selection (ratified safeguard)
 
 Activation preconditions — all enforced in the repository layer, backed by

@@ -36,7 +36,11 @@ _DEFAULT_FRAMING = "how the domain supports the company's stated direction"
 
 
 def select_cited_evidence(
-    evidence_entries: list[Any], *, offer_id: str, prospect_pdm_code: str | None
+    evidence_entries: list[Any],
+    *,
+    offer_id: str,
+    prospect_pdm_code: str | None,
+    limit: int | None = MAX_CITED_EVIDENCE,
 ) -> list[Any]:
     """ACTIVE, pair-relevant evidence; offer-specific first, then newest first."""
     relevant = [
@@ -51,7 +55,7 @@ def select_cited_evidence(
     relevant.sort(key=lambda entry: entry.id)
     relevant.sort(key=lambda entry: entry.created_at, reverse=True)
     relevant.sort(key=lambda entry: entry.offer_id != offer_id)
-    return relevant[:MAX_CITED_EVIDENCE]
+    return relevant if limit is None else relevant[:limit]
 
 
 def generate_acquisition_hypothesis(

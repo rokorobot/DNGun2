@@ -87,3 +87,9 @@ POST   /hypotheses/{id}/evidence/{evidence_entry_id}                   link (DRA
 DELETE /hypotheses/{id}/evidence/{evidence_entry_id}                   unlink (DRAFT)
 POST   /hypotheses/{id}/propose | approve | reject | activate | supersede
 ```
+
+AI assist without an API key (uses your own Claude chat): `GET
+.../hypotheses/assist-prompt` returns a prompt to paste into Claude;
+`POST .../hypotheses/assist` with `{"response": "<Claude's answer>"}`
+stores it as an `LLM_ASSISTED` DRAFT for normal review. Answers citing
+evidence that was not in the prompt are rejected.

@@ -566,6 +566,18 @@ class HypothesisGenerateRequest(StrictRequest):
     refines_hypothesis_id: str | None = None
 
 
+class HypothesisAssistSubmit(StrictRequest):
+    response: str = Field(min_length=1)  # the AI answer, pasted verbatim
+    decision_maker_id: str | None = None
+    refines_hypothesis_id: str | None = None
+    model: str | None = None  # optional label, e.g. which Claude model was used
+
+
+class HypothesisAssistPrompt(BaseModel):
+    prompt: str
+    evidence_ids: list[str]
+
+
 class HypothesisEvidenceLinkCreate(StrictRequest):
     note: str | None = None
 

@@ -15,6 +15,13 @@ from .learning import (
     calculate_signal_performance,
     render_learning_markdown,
 )
+from .hypothesis_assist import (
+    MAX_PROMPT_EVIDENCE,
+    PROVIDER as ASSIST_PROVIDER,
+    AssistResponseError,
+    build_assist_prompt,
+    parse_assist_response,
+)
 from .hypothesis_generator import generate_acquisition_hypothesis, select_cited_evidence
 from .offer_intelligence import generate_offer_hypothesis
 from .offer_fit import calculate_offer_prospect_fit
@@ -30,6 +37,8 @@ from .schemas import (
     AcquisitionHypothesis,
     AcquisitionHypothesisDetail,
     HypothesisApproval,
+    HypothesisAssistPrompt,
+    HypothesisAssistSubmit,
     HypothesisCreate,
     HypothesisDraftUpdate,
     HypothesisEvidenceLinkCreate,
@@ -716,32 +725,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         repository: Repository = Depends(get_repository),
     ) -> AcquisitionHypothesisDetail:
         data = data or HypothesisGenerateRequest()
-        offer = require_offer(repository, offer_id)
-        prospect = require_prospect(repository, prospect_id)
-        require_hypothesis_refs(repository, data.decision_maker_id, data.refines_hypothesis_id)
-        profile = repository.get_offer_intelligence_profile(offer_id)
-        if profile is None:
-            raise HTTPException(status_code=409, detail="Approved offer profile required")
-        segment = repository.get_segment_by_code(prospect.segment)
-        cited = select_cited_evidence(
-            repository.list_evidence_entries(),
-            offer_id=offer_id,
-            prospect_pdm_code=segment.pdm_code if segment else None,
-        )
+        ctx = hypothesis_context(repository, offer_id, prospect_id, data.decision_maker_id)
+        require_hypothesis_refs(repository, None, data.refines_hypothesis_id)
         draft = generate_acquisition_hypothesis(
             offer_id=offer_id,
-            offer_name=offer.name,
-            offer_category=profile.profile.offer_category,
-            commercial_hypothesis=profile.profile.commercial_hypothesis,
-            company_name=prospect.company_name,
-            segment=prospect.segment,
-            signals=repository.list_signals(prospect_id),
-            cited_evidence=cited,
-            decision_maker=(
-                repository.get_decision_maker(data.decision_maker_id)
-                if data.decision_maker_id
-                else None
+            cited_evidence=select_cited_evidence(
+                ctx["evidence"], offer_id=offer_id, prospect_pdm_code=ctx["pdm_code"]
             ),
+            **ctx["draft_inputs"],
         )
         model = governed(
             lambda: repository.create_hypothesis(
@@ -757,6 +748,69 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         )
         for evidence_entry_id, note in draft["evidence_links"]:
             governed(lambda: repository.attach_evidence(model.id, evidence_entry_id, note))
+        return hypothesis_detail(repository, model)
+
+    @app.get(
+        "/offers/{offer_id}/prospects/{prospect_id}/hypotheses/assist-prompt",
+        response_model=HypothesisAssistPrompt,
+    )
+    def get_hypothesis_assist_prompt(
+        offer_id: str,
+        prospect_id: str,
+        decision_maker_id: str | None = Query(default=None),
+        repository: Repository = Depends(get_repository),
+    ) -> HypothesisAssistPrompt:
+        ctx = hypothesis_context(repository, offer_id, prospect_id, decision_maker_id)
+        evidence = assist_evidence(ctx, offer_id)
+        return HypothesisAssistPrompt(
+            prompt=build_assist_prompt(evidence=evidence, **ctx["draft_inputs"]),
+            evidence_ids=[entry.id for entry in evidence],
+        )
+
+    @app.post(
+        "/offers/{offer_id}/prospects/{prospect_id}/hypotheses/assist",
+        response_model=AcquisitionHypothesisDetail,
+        status_code=201,
+    )
+    def submit_hypothesis_assist(
+        offer_id: str,
+        prospect_id: str,
+        data: HypothesisAssistSubmit,
+        repository: Repository = Depends(get_repository),
+    ) -> AcquisitionHypothesisDetail:
+        ctx = hypothesis_context(repository, offer_id, prospect_id, data.decision_maker_id)
+        require_hypothesis_refs(repository, None, data.refines_hypothesis_id)
+        try:
+            answer = parse_assist_response(data.response)
+        except AssistResponseError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        # The AI may cite only evidence that was offered to it and is still ACTIVE.
+        allowed = {entry.id for entry in assist_evidence(ctx, offer_id)}
+        unknown = [i for i in answer["evidence_ids"] if i not in allowed]
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Answer cites evidence outside the allowed set: {', '.join(unknown)}",
+            )
+        model = governed(
+            lambda: repository.create_hypothesis(
+                offer_id,
+                prospect_id,
+                answer["statement"],
+                HypothesisSource.LLM_ASSISTED.value,
+                decision_maker_id=data.decision_maker_id,
+                refines_hypothesis_id=data.refines_hypothesis_id,
+                recipient_framing=answer["recipient_framing"],
+                provider=ASSIST_PROVIDER,
+                model_name=data.model,
+            )
+        )
+        for evidence_entry_id in answer["evidence_ids"]:
+            governed(
+                lambda: repository.attach_evidence(
+                    model.id, evidence_entry_id, "Cited by AI-assisted draft (pasted answer)."
+                )
+            )
         return hypothesis_detail(repository, model)
 
     @app.get(
@@ -933,6 +987,52 @@ def require_offer(repository: Repository, offer_id: str) -> Offer:
     if offer is None:
         raise HTTPException(status_code=404, detail="Offer not found")
     return offer
+
+
+def hypothesis_context(
+    repository: Repository,
+    offer_id: str,
+    prospect_id: str,
+    decision_maker_id: str | None,
+) -> dict:
+    """Shared inputs for generated and AI-assisted hypothesis drafts."""
+    offer = require_offer(repository, offer_id)
+    prospect = require_prospect(repository, prospect_id)
+    decision_maker = None
+    if decision_maker_id:
+        decision_maker = repository.get_decision_maker(decision_maker_id)
+        if decision_maker is None:
+            raise HTTPException(status_code=404, detail="Decision maker not found")
+        if decision_maker.prospect_id != prospect_id:
+            raise HTTPException(
+                status_code=409, detail="Decision maker must belong to the bound prospect"
+            )
+    profile = repository.get_offer_intelligence_profile(offer_id)
+    if profile is None:
+        raise HTTPException(status_code=409, detail="Approved offer profile required")
+    segment = repository.get_segment_by_code(prospect.segment)
+    return {
+        "evidence": repository.list_evidence_entries(),
+        "pdm_code": segment.pdm_code if segment else None,
+        "draft_inputs": {
+            "offer_name": offer.name,
+            "offer_category": profile.profile.offer_category,
+            "commercial_hypothesis": profile.profile.commercial_hypothesis,
+            "company_name": prospect.company_name,
+            "segment": prospect.segment,
+            "signals": repository.list_signals(prospect_id),
+            "decision_maker": decision_maker,
+        },
+    }
+
+
+def assist_evidence(ctx: dict, offer_id: str) -> list:
+    return select_cited_evidence(
+        ctx["evidence"],
+        offer_id=offer_id,
+        prospect_pdm_code=ctx["pdm_code"],
+        limit=MAX_PROMPT_EVIDENCE,
+    )
 
 
 def require_hypothesis(repository: Repository, hypothesis_id: str):
