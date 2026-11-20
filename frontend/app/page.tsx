@@ -8,6 +8,7 @@ import {
   ClipboardList,
   Edit2,
   FileText,
+  FlaskConical,
   Gauge,
   LineChart,
   Plus,
@@ -21,6 +22,7 @@ import {
   Trash2
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import HypothesisWorkbench from "./HypothesisWorkbench";
 import {
   addSignal,
   AlphaSignalRule,
@@ -81,7 +83,7 @@ import {
   deleteContactPath
 } from "../lib/api";
 
-type View = "inbox" | "scoring" | "report" | "evidence" | "outcomes" | "learning" | "offers";
+type View = "inbox" | "scoring" | "report" | "evidence" | "outcomes" | "learning" | "offers" | "hypotheses";
 
 export default function Home() {
   const [view, setView] = useState<View>("scoring");
@@ -284,7 +286,7 @@ export default function Home() {
     if (view === "evidence") void refreshEvidenceEntries();
     if (view === "outcomes") void refreshCampaignWorkbench();
     if (view === "learning") void refreshLearning(filterPdmCode, filterOfferId);
-    if (view === "offers") void refreshOffers();
+    if (view === "offers" || view === "hypotheses") void refreshOffers();
   }, [view, filterPdmCode, filterOfferId]);
 
   useEffect(() => {
@@ -388,9 +390,12 @@ export default function Home() {
             }}
           />
 
-          <nav className="grid gap-2 md:grid-cols-7">
+          <nav className="grid gap-2 grid-cols-2 md:grid-cols-4">
             <NavButton active={view === "offers"} onClick={() => setView("offers")}>
               <Radar size={15} /> Offer Intelligence
+            </NavButton>
+            <NavButton active={view === "hypotheses"} onClick={() => setView("hypotheses")}>
+              <FlaskConical size={15} /> Hypotheses
             </NavButton>
             <NavButton active={view === "inbox"} onClick={() => setView("inbox")}>
               <ClipboardList size={15} /> Prospect Inbox
@@ -431,6 +436,7 @@ export default function Home() {
               setMessage={setMessage}
             />
           ) : null}
+          {view === "hypotheses" ? <HypothesisWorkbench offers={offers} prospects={prospects} /> : null}
           {view === "inbox" ? <InboxOverview prospects={prospects} /> : null}
           {view === "scoring" ? (
             <ScoringWorkspace

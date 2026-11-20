@@ -94,6 +94,9 @@ export type EvidenceEntry = {
   evidence: string;
   impact: number;
   source?: string | null;
+  status?: "ACTIVE" | "ARCHIVED" | "RETRACTED" | "INVALIDATED";
+  pdm_code?: string | null;
+  offer_id?: string | null;
   created_at: string;
 };
 
@@ -640,3 +643,129 @@ export function deleteContactPath(id: string) {
   });
 }
 
+
+// --- Acquisition hypotheses (MVP 1.3A) -----------------------------------
+
+export type HypothesisStatus =
+  | "DRAFT"
+  | "PROPOSED"
+  | "APPROVED"
+  | "REJECTED"
+  | "SUPERSEDED"
+  | "VALIDATING"
+  | "SUPPORTED"
+  | "WEAKENED";
+
+export type AcquisitionHypothesis = {
+  id: string;
+  offer_id: string;
+  prospect_id: string;
+  decision_maker_id: string | null;
+  refines_hypothesis_id: string | null;
+  statement: string;
+  recipient_framing: string | null;
+  source: "HUMAN" | "DETERMINISTIC" | "LLM_ASSISTED";
+  provider: string | null;
+  model: string | null;
+  status: HypothesisStatus;
+  is_active: boolean;
+  reasoning_confidence: number | null;
+  reasoning_confidence_explanation: string[];
+  empirical_confidence: number | null;
+  reviewer_assessment: "STRONG" | "ADEQUATE" | "WEAK" | null;
+  superseded_by_id: string | null;
+  reviewed_at: string | null;
+  review_notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HypothesisDetail = AcquisitionHypothesis & {
+  evidence_links: {
+    id: string;
+    evidence_entry_id: string;
+    note: string | null;
+    created_at: string;
+    evidence: EvidenceEntry;
+  }[];
+  audit_events: { id: string; event_type: string; detail: Record<string, unknown>; created_at: string }[];
+  parent: AcquisitionHypothesis | null;
+};
+
+export type HypothesisBinding = {
+  decision_maker_id?: string;
+  refines_hypothesis_id?: string;
+};
+
+const hypothesesPath = (offerId: string, prospectId: string) =>
+  `/offers/${offerId}/prospects/${prospectId}/hypotheses`;
+
+const post = <T>(path: string, body?: unknown) =>
+  request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
+
+export function listHypotheses(offerId: string, prospectId: string) {
+  return request<AcquisitionHypothesis[]>(hypothesesPath(offerId, prospectId));
+}
+
+export function getHypothesis(id: string) {
+  return request<HypothesisDetail>(`/hypotheses/${id}`);
+}
+
+export function createHypothesis(
+  offerId: string,
+  prospectId: string,
+  data: HypothesisBinding & { statement: string; recipient_framing?: string }
+) {
+  return post<AcquisitionHypothesis>(hypothesesPath(offerId, prospectId), data);
+}
+
+export function generateHypothesis(offerId: string, prospectId: string, binding: HypothesisBinding) {
+  return post<HypothesisDetail>(`${hypothesesPath(offerId, prospectId)}/generate`, binding);
+}
+
+export function getHypothesisAssistPrompt(offerId: string, prospectId: string, decisionMakerId?: string) {
+  const query = decisionMakerId ? `?decision_maker_id=${encodeURIComponent(decisionMakerId)}` : "";
+  return request<{ prompt: string; evidence_ids: string[] }>(
+    `${hypothesesPath(offerId, prospectId)}/assist-prompt${query}`
+  );
+}
+
+export function submitHypothesisAssist(
+  offerId: string,
+  prospectId: string,
+  data: HypothesisBinding & { response: string; model?: string }
+) {
+  return post<HypothesisDetail>(`${hypothesesPath(offerId, prospectId)}/assist`, data);
+}
+
+export function updateDraftHypothesis(id: string, data: { statement?: string; recipient_framing?: string | null }) {
+  return request<AcquisitionHypothesis>(`/hypotheses/${id}`, { method: "PUT", body: JSON.stringify(data) });
+}
+
+export function attachHypothesisEvidence(id: string, evidenceEntryId: string, note?: string) {
+  return post<HypothesisDetail>(`/hypotheses/${id}/evidence/${evidenceEntryId}`, note ? { note } : undefined);
+}
+
+export function detachHypothesisEvidence(id: string, evidenceEntryId: string) {
+  return request<HypothesisDetail>(`/hypotheses/${id}/evidence/${evidenceEntryId}`, { method: "DELETE" });
+}
+
+export function proposeHypothesis(id: string) {
+  return post<HypothesisDetail>(`/hypotheses/${id}/propose`);
+}
+
+export function approveHypothesis(id: string, data: { reviewer_assessment?: string; review_notes?: string }) {
+  return post<HypothesisDetail>(`/hypotheses/${id}/approve`, data);
+}
+
+export function rejectHypothesis(id: string, review_notes?: string) {
+  return post<HypothesisDetail>(`/hypotheses/${id}/reject`, review_notes ? { review_notes } : undefined);
+}
+
+export function activateHypothesis(id: string) {
+  return post<HypothesisDetail>(`/hypotheses/${id}/activate`);
+}
+
+export function supersedeHypothesis(id: string, data: { statement?: string; recipient_framing?: string }) {
+  return post<HypothesisDetail>(`/hypotheses/${id}/supersede`, data);
+}
