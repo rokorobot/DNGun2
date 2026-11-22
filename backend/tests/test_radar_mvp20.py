@@ -39,6 +39,9 @@ def test_watch_profile_from_name_and_ending():
     # Offers created elsewhere may keep mixed case; matching is case-insensitive.
     assert build_watch_profile("RobotStore.App")["keywords"] == ["robotstore", "robot", "store"]
     assert match_headline("RobotStore raises seed", "RobotStore.App", profile).match_type == "NAME"
+    # Finance words split; generic words help splitting but are not searched.
+    assert build_watch_profile("StockExchange.xyz")["keywords"] == ["stockexchange", "stock", "exchange"]
+    assert build_watch_profile("bestmortgagerates.com")["keywords"] == ["bestmortgagerates", "mortgage", "rates"]
     assert build_watch_profile("solarlease.de")["markets"] == ["DE"]
     assert build_watch_profile("petinsure.co.uk")["markets"] == ["GB"]
     custom = build_watch_profile("robotstore.app", markets=["DACH", "us"], keywords=["Robotics"])

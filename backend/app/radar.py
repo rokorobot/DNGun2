@@ -46,7 +46,9 @@ def load_radar_rules(path: Path = RULES_PATH) -> dict:
             raise ValueError(f"radar.yaml is missing section '{section}'")
     for event in rules["events"]:
         event["regex"] = re.compile(event["pattern"], re.IGNORECASE)
-    rules["vocabulary"] = {str(word).lower() for word in rules["vocabulary"]}
+    rules["vocabulary"] = {
+        str(word).lower() for word in rules["vocabulary"] + rules.get("vocabulary_extra", [])
+    }
     return rules
 
 
@@ -155,7 +157,8 @@ def build_watch_profile(
     else:
         parts = [p for chunk in re.split(r"[-.]", stem) for p in segment_words(chunk, rules["vocabulary"])]
         joined = stem.replace("-", "").replace(".", "")
-        final_keywords = [joined] + [p for p in parts if p != joined]
+        weak = set(rules.get("weak_words", []))
+        final_keywords = [joined] + [p for p in parts if p != joined and p not in weak]
     if industry:
         final_keywords.append(industry.lower())
     final_keywords = list(dict.fromkeys(k for k in final_keywords if len(k) >= MIN_KEYWORD_LENGTH))

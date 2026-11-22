@@ -123,3 +123,45 @@ vocabulary: [
   vet, video, vision, voice, wallet, ware, watch, water, wave, wealth, web, wind, work,
   world, yoga, zone
 ]
+
+# Added 2026-11-22: finance, commerce and general business words.
+vocabulary_extra: [
+  stock, stocks, exchange, trading, trader, broker, invest, investor, capital, equity,
+  asset, assets, bond, bonds, fx, forex, bitcoin, chain, block, ledger, coinbase,
+  insurance, mortgage, lending, lend, borrow, payment, payments, card, cards, bill,
+  invoice, account, audit, tax, budget, saving, savings, pension, retire, wealth,
+  advisor, advice, consult, agency, partner, group, global, direct, express, prime,
+  first, best, top, smart, easy, quick, simple, open, free, true, real, prop, property,
+  estate, house, housing, homes, rental, rentals, hotel, hotels, stay, booking, trip,
+  trips, flight, flights, air, jet, auto, cars, parts, repair, service, services,
+  clinic, doctor, doctors, nurse, pharma, pharmacy, drug, therapy, dental, vision,
+  skin, beauty, hair, fashion, wear, shoe, shoes, jewel, jewelry, luxury, art, music,
+  sound, radio, tv, movie, movies, book, books, learn, learning, academy, course,
+  courses, class, exam, kids, baby, family, senior, dating, love, wedding, event,
+  events, party, bar, beer, wine, coffee, tea, pizza, burger, kitchen, recipe, fresh,
+  organic, vegan, meal, meals, grocery, market, markets, mall, outlet, deals, coupon,
+  price, prices, compare, review, reviews, rate, rates, score, rank, search, find,
+  finder, match, list, lists, guide, wiki, info, ask, answer, chatbot, bot, bots,
+  agent, agents, assist, copilot, automate, automation, robotic, machine, machines,
+  factory, industrial, steel, metal, mining, oil, gas, fuel, battery, batteries, ev,
+  electric, charge, charging, grid, nuclear, hydrogen, climate, carbon, recycle,
+  waste, plastic, packaging, logistics, freight, shipping, delivery, courier, parcel,
+  warehouse, supply, sourcing, procure, construct, construction, builder, architect,
+  design, designer, studio, print, printing, sign, label, brand, branding, ads, advert,
+  marketing, seo, growth, crm, sales, leads, hr, payroll, recruit, recruiting, career,
+  careers, jobs, gig, freelance, remote, coworking, security, privacy, identity, id,
+  password, backup, server, servers, hosting, domain, domains, email, sms, call,
+  calls, phone, mobile, wireless, telecom, satellite, rocket, aero, aerospace, defense,
+  drone, drones, robotaxi, scooter, bikes, ebike, golf, tennis, soccer, football,
+  sports, gym, run, running, yoga, health, healthy, medical, med, bio, genome, lab,
+  labs, science, research, quantum, compute, computing, chip, chips, semi, sensor,
+  sensors, iot, vr, ar, metaverse, game, games, gaming, esports, bet, betting, casino,
+  lottery, pets, dogs, cats, horse, farm, farming, agri, agro, seed, seeds, plant,
+  plants, garden, flower, flowers, legal, lawyer, lawyers, law, court, contract,
+  contracts, notary, government, civic, vote, city, cities, urban, smartcity
+]
+
+# Words that help split names but are too generic to search on.
+weak_words: [best, top, first, free, easy, quick, simple, open, true, real, one, pro,
+  smart, global, direct, express, prime, new, my, the, get, go, app, hub, net, web,
+  online, group, info, list, find, ask, fast, cool, key, zone, world, life]
