@@ -641,3 +641,26 @@ class AcquisitionHypothesisDetail(AcquisitionHypothesis):
     evidence_links: list[HypothesisEvidenceLink]
     audit_events: list[HypothesisAuditEvent]
     parent: AcquisitionHypothesis | None = None
+
+
+# --- Opportunity Radar (MVP 2.0) -------------------------------------------
+
+
+class PortfolioImport(StrictRequest):
+    text: str = Field(min_length=1)  # pasted list or CSV (comma or semicolon)
+
+
+class WatchProfileUpdate(StrictRequest):
+    keywords: list[str]
+    markets: list[str] = Field(default_factory=list)
+    industry: str | None = None
+
+
+class RadarScanRequest(StrictRequest):
+    offer_ids: list[str] | None = None
+
+
+class OpportunityAccept(StrictRequest):
+    company_name: str = Field(min_length=1)
+    segment: str = Field(min_length=1)
+    website: str | None = None

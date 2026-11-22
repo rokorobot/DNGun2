@@ -549,3 +549,65 @@ class HypothesisAuditEventModel(Base):
     )
 
 
+
+
+# ---------------------------------------------------------------------------
+# Opportunity Radar (MVP 2.0): portfolio watch profiles, news items, and the
+# news x domain matches awaiting operator review.
+# ---------------------------------------------------------------------------
+
+
+class DomainWatchProfileModel(Base):
+    __tablename__ = "domain_watch_profiles"
+
+    offer_id: Mapped[str] = mapped_column(
+        ForeignKey("offers.id", ondelete="CASCADE"), primary_key=True
+    )
+    keywords: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON list
+    markets: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON list
+    industry: Mapped[str | None] = mapped_column(String)
+    origin: Mapped[str] = mapped_column(String, nullable=False, default="AUTO")
+    last_scanned_at: Mapped[str | None] = mapped_column(String)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class NewsItemModel(Base):
+    __tablename__ = "news_items"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    url: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    source_domain: Mapped[str | None] = mapped_column(String)
+    source_country: Mapped[str | None] = mapped_column(String)
+    language: Mapped[str | None] = mapped_column(String)
+    published_at: Mapped[str | None] = mapped_column(String)
+    fetched_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class OpportunityModel(Base):
+    __tablename__ = "opportunities"
+    __table_args__ = (
+        UniqueConstraint("offer_id", "news_item_id", name="uq_opportunity_offer_news"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    offer_id: Mapped[str] = mapped_column(
+        ForeignKey("offers.id", ondelete="CASCADE"), nullable=False
+    )
+    news_item_id: Mapped[str] = mapped_column(
+        ForeignKey("news_items.id", ondelete="CASCADE"), nullable=False
+    )
+    company_name: Mapped[str | None] = mapped_column(String)
+    event_type: Mapped[str | None] = mapped_column(String)
+    match_type: Mapped[str] = mapped_column(String, nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    explanation: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON list
+    status: Mapped[str] = mapped_column(String, nullable=False, default="NEW")
+    prospect_id: Mapped[str | None] = mapped_column(
+        ForeignKey("prospects.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    reviewed_at: Mapped[str | None] = mapped_column(String)
+
+    offer: Mapped[OfferModel] = relationship()
+    news_item: Mapped[NewsItemModel] = relationship()

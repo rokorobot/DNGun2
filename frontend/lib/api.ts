@@ -769,3 +769,63 @@ export function activateHypothesis(id: string) {
 export function supersedeHypothesis(id: string, data: { statement?: string; recipient_framing?: string }) {
   return post<HypothesisDetail>(`/hypotheses/${id}/supersede`, data);
 }
+
+// --- Opportunity Radar (MVP 2.0) -----------------------------------------
+
+export type PortfolioDomain = {
+  offer_id: string;
+  domain: string;
+  price: number | null;
+  notes: string | null;
+  keywords: string[];
+  markets: string[];
+  industry: string | null;
+  origin: "AUTO" | "MANUAL";
+  last_scanned_at: string | null;
+  new_opportunities: number;
+};
+
+export type Opportunity = {
+  id: string;
+  offer_id: string;
+  domain: string;
+  company_name: string | null;
+  event_type: string | null;
+  match_type: "NAME" | "KEYWORD";
+  score: number;
+  explanation: string[];
+  status: "NEW" | "ACCEPTED" | "DISMISSED";
+  prospect_id: string | null;
+  created_at: string;
+  news: { url: string; title: string; source_domain: string | null; source_country: string | null; published_at: string | null };
+};
+
+export type RadarScanSummary = { domains: number; queries: number; articles: number; new_opportunities: number; errors: string[] };
+
+export function importPortfolio(text: string) {
+  return post<{ created: string[]; updated: string[]; invalid: string[] }>("/portfolio/import", { text });
+}
+
+export function listPortfolio() {
+  return request<PortfolioDomain[]>("/portfolio");
+}
+
+export function updateWatchProfile(offerId: string, data: { keywords: string[]; markets: string[]; industry?: string | null }) {
+  return request<PortfolioDomain>(`/portfolio/${offerId}/profile`, { method: "PUT", body: JSON.stringify(data) });
+}
+
+export function scanRadar(offerIds?: string[]) {
+  return post<RadarScanSummary>("/radar/scan", offerIds ? { offer_ids: offerIds } : {});
+}
+
+export function listOpportunities(status = "NEW") {
+  return request<Opportunity[]>(`/opportunities?status=${encodeURIComponent(status)}`);
+}
+
+export function acceptOpportunity(id: string, data: { company_name: string; segment: string; website?: string }) {
+  return post<Opportunity>(`/opportunities/${id}/accept`, data);
+}
+
+export function dismissOpportunity(id: string) {
+  return post<Opportunity>(`/opportunities/${id}/dismiss`);
+}

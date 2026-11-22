@@ -1,0 +1,125 @@
+# Opportunity Radar rules (MVP 2.0). Business logic, editable without code.
+
+# Country domain endings -> market code. Endings not listed (com, io, ai,
+# app, net, org, co, tech, dev, ...) mean GLOBAL: no country filter.
+tld_markets:
+  de: DE
+  at: AT
+  ch: CH
+  cz: CZ
+  sk: SK
+  pl: PL
+  fr: FR
+  es: ES
+  it: IT
+  nl: NL
+  be: BE
+  uk: GB
+  co.uk: GB
+  ie: IE
+  se: SE
+  dk: DK
+  "no": "NO"
+  fi: FI
+  pt: PT
+  us: US
+  ca: CA
+  au: AU
+  eu: EU
+
+# Market code -> news-source countries (GDELT names) and search language.
+markets:
+  GLOBAL: {countries: [], language: english}
+  US: {countries: [unitedstates], language: english}
+  GB: {countries: [unitedkingdom], language: english}
+  IE: {countries: [ireland], language: english}
+  CA: {countries: [canada], language: english}
+  AU: {countries: [australia], language: english}
+  DE: {countries: [germany], language: german}
+  AT: {countries: [austria], language: german}
+  CH: {countries: [switzerland], language: german}
+  CZ: {countries: [czechrepublic], language: czech}
+  SK: {countries: [slovakia], language: slovak}
+  PL: {countries: [poland], language: polish}
+  FR: {countries: [france], language: french}
+  ES: {countries: [spain], language: spanish}
+  IT: {countries: [italy], language: italian}
+  NL: {countries: [netherlands], language: dutch}
+  BE: {countries: [belgium], language: dutch}
+  SE: {countries: [sweden], language: swedish}
+  DK: {countries: [denmark], language: danish}
+  "NO": {countries: [norway], language: norwegian}
+  FI: {countries: [finland], language: finnish}
+  PT: {countries: [portugal], language: portuguese}
+
+# Region shortcuts usable in the portfolio "markets" column.
+regions:
+  DACH: [DE, AT, CH]
+  EU: [DE, FR, NL, ES, IT]
+  EUROPE: [DE, FR, NL, ES, IT, GB]
+  NORDICS: [SE, DK, "NO", FI]
+  BENELUX: [NL, BE]
+  CEE: [CZ, SK, PL]
+  UK: [GB]
+  USA: [US]
+
+# Words that make a headline about a company event, per search language.
+# English terms are always added: startup news is often in English.
+event_terms:
+  english: [raises, funding, seed, "series a", "series b", launches, startup, founded, rebrand, acquires]
+  german: [finanzierung, investition, gründer, startup, "series a"]
+  czech: [investice, startup, financování, zakladatel]
+  slovak: [investícia, startup, zakladateľ]
+  polish: [inwestycja, finansowanie, startup, założyciel]
+  french: [levée, financement, startup, fondateur]
+  spanish: [ronda, financiación, startup, fundador]
+  italian: [finanziamento, round, startup, fondatore]
+  dutch: [financiering, investering, startup, oprichter]
+  swedish: [finansiering, investering, startup, grundare]
+  danish: [finansiering, investering, startup, stifter]
+  norwegian: [finansiering, investering, startup, gründer]
+  finnish: [rahoitus, sijoitus, startup, perustaja]
+  portuguese: [financiamento, investimento, startup, fundador]
+
+# Event detection on the headline (case-insensitive regex), first match wins.
+events:
+  - {type: FUNDING, label: Funding round, tier: 1, weight: 25,
+     pattern: "\\b(raises?|raised|secures?|closes?|lands?|bags?|nets?|funding|seed round|series [a-e]|pre-seed|finanzierung|investice|financement|financiación|finanziamento|financiering)\\b"}
+  - {type: NEW_COMPANY, label: New company, tier: 1, weight: 20,
+     pattern: "\\b(founded|launches new startup|new startup|emerges from stealth|out of stealth|gründet|zakládá)\\b"}
+  - {type: REBRAND, label: Rebrand, tier: 1, weight: 20,
+     pattern: "\\b(rebrands?|rebranded|renames?|renamed|new name)\\b"}
+  - {type: EXPANSION, label: Expansion, tier: 2, weight: 15,
+     pattern: "\\b(expands?|expansion|enters|opens? .{0,20}(office|market)|acquires?|acquired)\\b"}
+  - {type: LAUNCH, label: Product launch, tier: 2, weight: 15,
+     pattern: "\\b(launch(es|ed)?|unveils?|introduces?|debuts?|startet)\\b"}
+  - {type: HIRING, label: Key hire, tier: 3, weight: 5,
+     pattern: "\\b(hires|appoints|names .{0,30}(ceo|cmo|cto|head))\\b"}
+
+scoring:
+  name_match: 60          # headline names a company called like the domain
+  keyword_hit: 15         # per domain keyword in the headline
+  keyword_cap: 45
+  min_score: 40           # below this, no opportunity is created
+  max_results_per_query: 75
+  timespan: 7d            # how far back each scan looks
+
+# Words used to split joined domain names (robotstore -> robot + store).
+# Add your niche words here; unknown parts stay as one keyword.
+vocabulary: [
+  ai, app, apps, auto, bank, bike, bio, book, box, brand, build, buy, cab, car, care,
+  cargo, carbon, cash, chat, chef, city, clean, cloud, coach, code, coin, cool, craft,
+  credit, crypto, cyber, data, deal, deck, deli, dental, desk, dev, diet, digital, doc,
+  dog, drive, drone, eat, eco, edu, energy, farm, fast, file, film, fin, finance, fit,
+  fitness, fleet, flow, fly, food, fund, game, garden, gift, go, gold, green, grid,
+  grow, guard, health, heat, help, hire, home, host, hub, insure, job, key, kid, lab,
+  land, law, lead, lease, legal, life, light, link, loan, lock, logic, mail, map,
+  market, mart, med, media, meta, mind, mobile, money, motor, net, news, note, ocean,
+  office, one, page, park, pay, pet, phone, photo, pilot, plan, play, pod, point,
+  power, pro, quant, rail, rent, ride, risk, robot, robotics, room, safe, sale, sales,
+  scan, school, sea, secure, sell, ship, shop, sky, smart, social, soft, solar, space,
+  sport, stack, star, store, stream, study, sun, swap, talent, task, tax, team, tech,
+  tele, test, ticket, token, tool, tour, trade, travel, truck, trust, tutor, vault,
+  vet, video, vision, voice, wallet, ware, watch, water, wave, wealth, web, wind, work,
+  world, yoga, zone
+]

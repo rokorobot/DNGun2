@@ -919,3 +919,15 @@ MVP 0 succeeds if it can:
 12. Identify at least one signal, Alpha Signal, or disqualification rule that should change.
 
 If it cannot learn from campaign outcomes, it is not DNGun.
+
+---
+
+# Direction change (owner, 2026-11-22)
+
+Priority is now finding buyers and reaching them: AI-assisted prospect
+discovery, then identifying the right people at qualified companies, then
+sending through several channels. Wording/phrasing help is the lowest
+priority. MVP 2.0 (Opportunity Radar) starts this: portfolio import,
+per-domain news watch profiles (markets depend on each domain), GDELT news
+scanning, and operator review of matches. People identification runs only
+for companies that pass all conditions; sending follows after that.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
@@ -15,6 +16,8 @@ from .learning import (
     calculate_signal_performance,
     render_learning_markdown,
 )
+from .radar import RateLimiter, fetch_gdelt
+from .radar_service import RadarError, RadarService
 from .hypothesis_assist import (
     MAX_PROMPT_EVIDENCE,
     PROVIDER as ASSIST_PROVIDER,
@@ -37,6 +40,10 @@ from .schemas import (
     AcquisitionHypothesis,
     AcquisitionHypothesisDetail,
     HypothesisApproval,
+    OpportunityAccept,
+    PortfolioImport,
+    RadarScanRequest,
+    WatchProfileUpdate,
     HypothesisAssistPrompt,
     HypothesisAssistSubmit,
     HypothesisCreate,
@@ -87,7 +94,12 @@ from .schemas import (
 from .scoring_engine import ScoringEngine
 
 
-def create_app(db_path: Path | None = None) -> FastAPI:
+def create_app(
+    db_path: Path | None = None,
+    *,
+    radar_fetch: Callable[..., list[dict]] | None = None,
+    radar_interval: float | None = None,
+) -> FastAPI:
     app = FastAPI(title="DNGun Prospect Intelligence API", version="0.1.0")
     session_factory = create_session_factory(db_path)
 
@@ -950,6 +962,72 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             )
         )
         return hypothesis_detail(repository, successor)
+
+
+    # ------------------------------------------------------------------
+    # Opportunity Radar (MVP 2.0): portfolio -> news -> matched buyers.
+    # ------------------------------------------------------------------
+
+    def get_radar(session: Session = Depends(get_session)) -> RadarService:
+        limiter = RateLimiter(radar_interval) if radar_interval is not None else None
+        return RadarService(session, fetch=radar_fetch or fetch_gdelt, limiter=limiter)
+
+    def radar_call(operation):
+        try:
+            return operation()
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except RadarError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/portfolio/import", status_code=201)
+    def import_portfolio(data: PortfolioImport, radar: RadarService = Depends(get_radar)) -> dict:
+        return radar.import_portfolio(data.text)
+
+    @app.get("/portfolio")
+    def list_portfolio(radar: RadarService = Depends(get_radar)) -> list[dict]:
+        return radar.list_portfolio()
+
+    @app.put("/portfolio/{offer_id}/profile")
+    def update_watch_profile(
+        offer_id: str, data: WatchProfileUpdate, radar: RadarService = Depends(get_radar)
+    ) -> dict:
+        return radar_call(
+            lambda: radar.update_profile(
+                offer_id, keywords=data.keywords, markets=data.markets, industry=data.industry
+            )
+        )
+
+    @app.post("/radar/scan")
+    def scan_radar(
+        data: RadarScanRequest | None = None, radar: RadarService = Depends(get_radar)
+    ) -> dict:
+        return radar_call(lambda: radar.scan(data.offer_ids if data else None))
+
+    @app.get("/opportunities")
+    def list_opportunities(
+        status: str | None = Query(default="NEW"),
+        offer_id: str | None = Query(default=None),
+        radar: RadarService = Depends(get_radar),
+    ) -> list[dict]:
+        return radar.list_opportunities(status=status or None, offer_id=offer_id)
+
+    @app.post("/opportunities/{opportunity_id}/accept")
+    def accept_opportunity(
+        opportunity_id: str, data: OpportunityAccept, radar: RadarService = Depends(get_radar)
+    ) -> dict:
+        return radar_call(
+            lambda: radar.accept(
+                opportunity_id,
+                company_name=data.company_name,
+                segment=data.segment,
+                website=data.website,
+            )
+        )
+
+    @app.post("/opportunities/{opportunity_id}/dismiss")
+    def dismiss_opportunity(opportunity_id: str, radar: RadarService = Depends(get_radar)) -> dict:
+        return radar_call(lambda: radar.dismiss(opportunity_id))
 
     return app
 

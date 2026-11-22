@@ -93,3 +93,28 @@ AI assist without an API key (uses your own Claude chat): `GET
 `POST .../hypotheses/assist` with `{"response": "<Claude's answer>"}`
 stores it as an `LLM_ASSISTED` DRAFT for normal review. Answers citing
 evidence that was not in the prompt are rejected.
+
+## Opportunity Radar (MVP 2.0)
+
+Finds companies in the news that could buy a domain in your portfolio.
+
+1. Import domains (Radar screen, or `POST /portfolio/import` with
+   `{"text": "<list or CSV>"}`). CSV columns: `domain` plus optional
+   `price, markets, keywords, industry, notes`; comma or semicolon. See
+   `backend/sample_data/portfolio_sample.csv`.
+2. Each domain gets a watch profile: keywords from its name
+   (`robotstore` → robotstore, robot, store) and markets from its ending
+   (`.de` → Germany; `.com/.io/.ai/.app` → global). Edit either on screen.
+3. Scan: `POST /radar/scan` (all or `{"offer_ids": [...]}`) or the daily
+   job `python backend/scripts/run_radar.py`. News comes from the free
+   GDELT API (commercial use allowed; one request per 5 s, so ~6 s per
+   domain per market). Only headlines naming a company event (funding,
+   new company, rebrand, expansion, launch, key hire) that match the
+   domain's name or keywords become opportunities.
+4. Review at `GET /opportunities`: accept (creates or reuses the
+   prospect, adds a source-linked news signal and evidence for the
+   offer) or dismiss.
+
+All rules (endings → markets, regions, event words per language,
+scoring, the word list used to split names) are in
+`backend/app/rules/radar.yaml`.

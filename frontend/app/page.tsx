@@ -14,6 +14,7 @@ import {
   Plus,
   Radar,
   RefreshCw,
+  Satellite,
   Save,
   ShieldCheck,
   SlidersHorizontal,
@@ -23,6 +24,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import HypothesisWorkbench from "./HypothesisWorkbench";
+import RadarWorkspace from "./RadarWorkspace";
 import {
   addSignal,
   AlphaSignalRule,
@@ -83,10 +85,10 @@ import {
   deleteContactPath
 } from "../lib/api";
 
-type View = "inbox" | "scoring" | "report" | "evidence" | "outcomes" | "learning" | "offers" | "hypotheses";
+type View = "inbox" | "scoring" | "report" | "evidence" | "outcomes" | "learning" | "offers" | "hypotheses" | "radar";
 
 export default function Home() {
-  const [view, setView] = useState<View>("scoring");
+  const [view, setView] = useState<View>("radar");
   const [segments, setSegments] = useState<SegmentRegistry[]>([]);
   const [prospects, setProspects] = useState<Prospect[]>([]);
   const [selectedProspectId, setSelectedProspectId] = useState("");
@@ -390,7 +392,10 @@ export default function Home() {
             }}
           />
 
-          <nav className="grid gap-2 grid-cols-2 md:grid-cols-4">
+          <nav className="grid gap-2 grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+            <NavButton active={view === "radar"} onClick={() => setView("radar")}>
+              <Satellite size={15} /> Opportunity Radar
+            </NavButton>
             <NavButton active={view === "offers"} onClick={() => setView("offers")}>
               <Radar size={15} /> Offer Intelligence
             </NavButton>
@@ -436,6 +441,7 @@ export default function Home() {
               setMessage={setMessage}
             />
           ) : null}
+          {view === "radar" ? <RadarWorkspace onProspectCreated={() => void refreshProspects()} segments={segments} /> : null}
           {view === "hypotheses" ? <HypothesisWorkbench offers={offers} prospects={prospects} /> : null}
           {view === "inbox" ? <InboxOverview prospects={prospects} /> : null}
           {view === "scoring" ? (
