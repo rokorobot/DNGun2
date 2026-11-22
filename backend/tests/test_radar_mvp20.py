@@ -59,6 +59,8 @@ def test_queries_follow_market_country_and_language():
     assert "finanzierung" in queries[0]["query"]  # German event words added
     assert "raises" in queries[0]["query"]  # English always included
     assert "sourcecountry" not in build_queries(build_watch_profile("robotstore.app"))[0]["query"]
+    single = build_queries({"keywords": ["stockexchange"], "markets": ["GLOBAL"]})[0]["query"]
+    assert single.startswith("stockexchange (")  # one term: no parentheses (GDELT rejects them)
 
 
 @pytest.mark.parametrize(

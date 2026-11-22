@@ -195,16 +195,22 @@ def _quote(term: str) -> str:
     return f'"{term}"' if " " in term else term
 
 
+def _any_of(terms: list[str]) -> str:
+    """GDELT allows parentheses only around OR'd terms, never around one term."""
+    quoted = [_quote(t) for t in terms]
+    return quoted[0] if len(quoted) == 1 else "(" + " OR ".join(quoted) + ")"
+
+
 def build_queries(profile: dict, rules: dict | None = None) -> list[dict]:
     """One GDELT query per market: (keywords) (event terms) + source filters."""
     rules = rules or load_radar_rules()
-    keyword_part = "(" + " OR ".join(_quote(k) for k in profile["keywords"]) + ")"
+    keyword_part = _any_of(profile["keywords"])
     queries = []
     for market in profile["markets"]:
         info = rules["markets"][market]
         language = info["language"]
         terms = list(dict.fromkeys(rules["event_terms"]["english"] + rules["event_terms"].get(language, [])))
-        event_part = "(" + " OR ".join(_quote(t) for t in terms) + ")"
+        event_part = _any_of(terms)
         countries = info["countries"]
         country_part = ""
         if len(countries) == 1:

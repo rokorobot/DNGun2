@@ -86,7 +86,8 @@ export default function RadarWorkspace({ segments, onProspectCreated }: { segmen
     try {
       const text = await action();
       await refresh();
-      setNotice({ text, ok: true });
+      // A scan where searches failed and nothing was read is not a success.
+      setNotice({ text, ok: !/search\(es\) failed/.test(text) || !/ 0 article/.test(text) });
     } catch (error) {
       setNotice({ text: errorText(error), ok: false });
     } finally {
